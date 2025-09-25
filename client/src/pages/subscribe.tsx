@@ -70,6 +70,11 @@ export default function Subscribe() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
+  // Fetch subscription plans from API
+  const { data: pricingPlans = [], isLoading: plansLoading } = useQuery({
+    queryKey: ["/api/subscription-plans"],
+  });
+
   useEffect(() => {
     // Create subscription as soon as the page loads
     apiRequest("POST", "/api/get-or-create-subscription", {})
@@ -87,43 +92,6 @@ export default function Subscribe() {
       });
   }, [toast]);
 
-  // Pricing plans for display
-  const pricingPlans = [
-    {
-      id: "starter",
-      name: "Starter",
-      price: 29,
-      documents: 50,
-      envelopes: 100,
-      aiRequests: 500,
-      storage: "10 GB",
-      features: ["Email support"],
-      popular: false,
-    },
-    {
-      id: "professional",
-      name: "Professional",
-      price: 99,
-      documents: 200,
-      envelopes: 500,
-      aiRequests: 1000,
-      storage: "50 GB",
-      features: ["Priority support", "Advanced analytics"],
-      popular: true,
-    },
-    {
-      id: "enterprise",
-      name: "Enterprise",
-      price: 249,
-      documents: "Unlimited",
-      envelopes: "Unlimited",
-      aiRequests: "Unlimited",
-      storage: "500 GB",
-      features: ["24/7 phone support", "Custom integrations"],
-      popular: false,
-    },
-  ];
-
   if (!clientSecret) {
     return (
       <div className="min-h-screen flex">
@@ -132,6 +100,20 @@ export default function Subscribe() {
           <div className="text-center">
             <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" aria-label="Loading"/>
             <p className="text-muted-foreground">Initializing subscription...</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (plansLoading) {
+    return (
+      <div className="min-h-screen flex">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" aria-label="Loading"/>
+            <p className="text-muted-foreground">Loading subscription plans...</p>
           </div>
         </main>
       </div>
@@ -157,13 +139,13 @@ export default function Subscribe() {
         <div className="p-6 space-y-8">
           {/* Pricing Plans */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            {pricingPlans.map((plan) => (
+            {pricingPlans.map((plan: any, index: number) => (
               <Card 
                 key={plan.id} 
-                className={`relative ${plan.popular ? 'border-primary border-2' : ''}`}
+                className={`relative ${index === 1 ? 'border-primary border-2' : ''}`}
                 data-testid={`card-plan-${plan.id}`}
               >
-                {plan.popular && (
+                {index === 1 && (
                   <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
                     <Badge className="bg-primary text-primary-foreground">
                       Most Popular
@@ -181,21 +163,21 @@ export default function Subscribe() {
                   <ul className="space-y-3 text-sm">
                     <li className="flex items-center space-x-2">
                       <i className="fas fa-check text-green-600"></i>
-                      <span>{plan.documents} documents/month</span>
+                      <span>{plan.documentsLimit} documents/month</span>
                     </li>
                     <li className="flex items-center space-x-2">
                       <i className="fas fa-check text-green-600"></i>
-                      <span>{plan.envelopes} envelopes/month</span>
+                      <span>{plan.envelopesLimit} envelopes/month</span>
                     </li>
                     <li className="flex items-center space-x-2">
                       <i className="fas fa-check text-green-600"></i>
-                      <span>{plan.aiRequests} AI requests/month</span>
+                      <span>{plan.aiRequestsLimit} AI requests/month</span>
                     </li>
                     <li className="flex items-center space-x-2">
                       <i className="fas fa-check text-green-600"></i>
-                      <span>{plan.storage} storage</span>
+                      <span>{plan.storageLimit} GB storage</span>
                     </li>
-                    {plan.features.map((feature, index) => (
+                    {(plan.features || []).map((feature: string, index: number) => (
                       <li key={index} className="flex items-center space-x-2">
                         <i className="fas fa-check text-green-600"></i>
                         <span>{feature}</span>
