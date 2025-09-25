@@ -1,0 +1,1189 @@
+# =============================================================================
+# Real Estate DocuSign Service - Complete API Specification
+# OpenAPI 3.0 Specification with Data Flow Documentation
+# =============================================================================
+
+openapi: 3.0.3
+info:
+  title: Real Estate DocuSign Service API
+  description: |
+    Automated document processing and e-signature workflow API for real estate agents.
+    
+    ## Features
+    - AI-powered document parsing
+    - Automated DocuSign envelope creation  
+    - Workflow orchestration with Langflow
+    - Real-time status tracking
+    - Automated reminders and notifications
+    
+    ## Authentication
+    All endpoints require JWT Bearer token authentication except for public endpoints.
+    
+    ## Rate Limits
+    - 1000 requests per hour for authenticated users
+    - 10 requests per minute for file uploads
+    
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: api-support@realestate-docusign.com
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.realestate-docusign.com/v1
+    description: Production server
+  - url: https://staging-api.realestate-docusign.com/v1
+    description: Staging server
+  - url: http://localhost:8000/v1
+    description: Development server
+
+# =============================================================================
+# SECURITY SCHEMES
+# =============================================================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+# =============================================================================
+# REUSABLE COMPONENTS
+# =============================================================================
+
+  schemas:
+    # User Management
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique user identifier
+        email:
+          type: string
+          format: email
+          description: User email address
+        first_name:
+          type: string
+          description: User's first name
+        last_name:
+          type: string
+          description: User's last name
+        brokerage_name:
+          type: string
+          description: Real estate brokerage name
+        license_number:
+          type: string
+          description: Real estate license number
+        is_active:
+          type: boolean
+          description: Whether user account is active
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+      required:
+        - id
+        - email
+        - first_name
+        - last_name
+
+    # Document Management
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique document identifier
+        original_filename:
+          type: string
+          description: Original filename of uploaded document
+        file_size:
+          type: integer
+          description: File size in bytes
+        file_type:
+          type: string
+          enum: [pdf, docx, doc]
+          description: Document file type
+        status:
+          type: string
+          enum: [uploaded, processing, parsed, envelope_created, sent, completed, failed]
+          description: Current document processing status
+        document_type:
+          type: string
+          description: AI-detected document type
+        property_address:
+          type: string
+          description: Property address extracted from document
+        contract_amount:
+          type: number
+          format: decimal
+          description: Contract amount if applicable
+        ai_parsed_at:
+          type: string
+          format: date-time
+          description: When AI parsing was completed
+        created_at:
+          type: string
+          format: date-time
+          description: Document upload timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+      required:
+        - id
+        - original_filename
+        - status
+        - created_at
+
+    DocumentField:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        field_type:
+          type: string
+          enum: [signature, initial, date, text]
+        field_name:
+          type: string
+        field_description:
+          type: string
+        page_number:
+          type: integer
+        x_coordinate:
+          type: integer
+        y_coordinate:
+          type: integer
+        signer_role:
+          type: string
+          enum: [buyer, seller, agent, witness]
+        is_required:
+          type: boolean
+      required:
+        - field_type
+        - page_number
+        - signer_role
+
+    # DocuSign Integration
+    DocuSignEnvelope:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        envelope_id:
+          type: string
+          description: DocuSign envelope ID
+        envelope_status:
+          type: string
+          enum: [created, sent, delivered, completed, declined, voided]
+        email_subject:
+          type: string
+        total_signers:
+          type: integer
+        completed_signers:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      required:
+        - envelope_id
+        - envelope_status
+
+    Recipient:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Full name of the recipient
+        email:
+          type: string
+          format: email
+          description: Email address
+        role:
+          type: string
+          enum: [buyer, seller, agent, witness]
+          description: Role in the transaction
+        routing_order:
+          type: integer
+          minimum: 1
+          description: Order in which recipient should sign
+        require_id_lookup:
+          type: boolean
+          description: Require ID verification
+        phone:
+          type: string
+          description: Phone number for SMS verification
+      required:
+        - name
+        - email
+        - role
+
+    # Workflow Management
+    WorkflowExecution:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workflow_type:
+          type: string
+        status:
+          type: string
+          enum: [started, running, completed, failed]
+        total_steps:
+          type: integer
+        completed_steps:
+          type: integer
+        current_step:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        execution_time_ms:
+          type: integer
+        error_message:
+          type: string
+      required:
+        - id
+        - workflow_type
+        - status
+
+    # Error Responses
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error type identifier
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid
+      required:
+        - error
+        - message
+        - timestamp
+
+    # Success Responses
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Operation completed successfully"
+        data:
+          type: object
+          description: Response data
+        timestamp:
+          type: string
+          format: date-time
+
+    # Dashboard Data
+    DashboardStats:
+      type: object
+      properties:
+        total_documents:
+          type: integer
+        pending_signatures:
+          type: integer
+        completed_documents:
+          type: integer
+        documents_this_month:
+          type: integer
+        completion_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        average_completion_time_hours:
+          type: number
+          format: float
+
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
+
+paths:
+  # =============================================================================
+  # AUTHENTICATION ENDPOINTS
+  # =============================================================================
+
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user account
+      description: Create a new user account for real estate agents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                brokerage_name:
+                  type: string
+                license_number:
+                  type: string
+              required:
+                - email
+                - password
+                - first_name
+                - last_name
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and return JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: JWT access token
+                  token_type:
+                    type: string
+                    example: "bearer"
+                  expires_in:
+                    type: integer
+                    example: 3600
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  expires_in:
+                    type: integer
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # =============================================================================
+  # DOCUMENT MANAGEMENT ENDPOINTS
+  # =============================================================================
+
+  /documents:
+    get:
+      tags:
+        - Documents
+      summary: Get user's documents
+      description: Retrieve list of documents uploaded by the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by document status
+          schema:
+            type: string
+            enum: [uploaded, processing, parsed, envelope_created, sent, completed, failed]
+        - name: page
+          in: query
+          description: Page number for pagination
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [created_at_asc, created_at_desc, name_asc, name_desc]
+            default: created_at_desc
+      responses:
+        '200':
+          description: Documents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Document'
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags:
+        - Documents
+      summary: Upload new document
+      description: Upload a document file and start processing workflow
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Document file (PDF, DOCX, or DOC)
+                recipients:
+                  type: string
+                  description: JSON string of recipient information
+                  example: |
+                    {
+                      "buyer": {"name": "John Doe", "email": "john@example.com"},
+                      "seller": {"name": "Jane Smith", "email": "jane@example.com"}
+                    }
+                auto_send:
+                  type: boolean
+                  description: Automatically send envelope after processing
+                  default: true
+              required:
+                - file
+      responses:
+        '202':
+          description: Document uploaded and processing started
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          document_id:
+                            type: string
+                            format: uuid
+                          workflow_id:
+                            type: string
+                            format: uuid
+                          status:
+                            type: string
+                            example: "processing"
+        '400':
+          description: Invalid file or request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /documents/{document_id}:
+    get:
+      tags:
+        - Documents
+      summary: Get document details
+      description: Retrieve detailed information about a specific document
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document details retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/Document'
+                          - type: object
+                            properties:
+                              fields:
+                                type: array
+                                items:
+                                  $ref: '#/components/schemas/DocumentField'
+                              envelope:
+                                $ref: '#/components/schemas/DocuSignEnvelope'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags:
+        - Documents
+      summary: Delete document
+      description: Delete a document and associated envelope (if not completed)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Cannot delete completed document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /documents/{document_id}/download:
+    get:
+      tags:
+        - Documents
+      summary: Download document
+      description: Download original or signed document file
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: query
+          description: Document version to download
+          schema:
+            type: string
+            enum: [original, signed]
+            default: original
+      responses:
+        '200':
+          description: Document file
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/msword:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # =============================================================================
+  # DOCUSIGN ENVELOPE ENDPOINTS
+  # =============================================================================
+
+  /envelopes:
+    get:
+      tags:
+        - Envelopes
+      summary: Get user's envelopes
+      description: Retrieve list of DocuSign envelopes for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by envelope status
+          schema:
+            type: string
+            enum: [created, sent, delivered, completed, declined, voided]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Envelopes retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  envelopes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocuSignEnvelope'
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+
+  /envelopes/{envelope_id}:
+    get:
+      tags:
+        - Envelopes
+      summary: Get envelope details
+      description: Retrieve detailed information about a specific envelope
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: envelope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Envelope details retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/DocuSignEnvelope'
+                          - type: object
+                            properties:
+                              recipients:
+                                type: array
+                                items:
+                                  allOf:
+                                    - $ref: '#/components/schemas/Recipient'
+                                    - type: object
+                                      properties:
+                                        status:
+                                          type: string
+                                          enum: [created, sent, delivered, completed, declined]
+                                        signed_at:
+                                          type: string
+                                          format: date-time
+
+  /envelopes/{envelope_id}/resend:
+    post:
+      tags:
+        - Envelopes
+      summary: Resend envelope
+      description: Resend DocuSign envelope to recipients
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: envelope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Envelope resent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /envelopes/{envelope_id}/void:
+    post:
+      tags:
+        - Envelopes
+      summary: Void envelope
+      description: Void a DocuSign envelope (cancel signing process)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: envelope_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Reason for voiding the envelope
+              required:
+                - reason
+      responses:
+        '200':
+          description: Envelope voided successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  # =============================================================================
+  # WORKFLOW ENDPOINTS
+  # =============================================================================
+
+  /workflows/{workflow_id}:
+    get:
+      tags:
+        - Workflows
+      summary: Get workflow status
+      description: Retrieve current status of a workflow execution
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Workflow status retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/WorkflowExecution'
+                          - type: object
+                            properties:
+                              steps:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    status:
+                                      type: string
+                                      enum: [pending, running, completed, failed, skipped]
+                                    started_at:
+                                      type: string
+                                      format: date-time
+                                    completed_at:
+                                      type: string
+                                      format: date-time
+                                    error_message:
+                                      type: string
+
+  # =============================================================================
+  # DASHBOARD & ANALYTICS ENDPOINTS
+  # =============================================================================
+
+  /dashboard:
+    get:
+      tags:
+        - Dashboard
+      summary: Get dashboard data
+      description: Retrieve dashboard statistics and recent activity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          description: Time period for statistics
+          schema:
+            type: string
+            enum: [week, month, quarter, year]
+            default: month
+      responses:
+        '200':
+          description: Dashboard data retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/DashboardStats'
+                          - type: object
+                            properties:
+                              recent_documents:
+                                type: array
+                                items:
+                                  $ref: '#/components/schemas/Document'
+                              chart_data:
+                                type: object
+                                properties:
+                                  documents_over_time:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        date:
+                                          type: string
+                                          format: date
+                                        count:
+                                          type: integer
+                                  completion_rate_trend:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        date:
+                                          type: string
+                                          format: date
+                                        rate:
+                                          type: number
+                                          format: float
+
+  # =============================================================================
+  # WEBHOOK ENDPOINTS
+  # =============================================================================
+
+  /webhooks/docusign:
+    post:
+      tags:
+        - Webhooks
+      summary: DocuSign webhook handler
+      description: Handle webhook events from DocuSign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  description: Event type
+                data:
+                  type: object
+                  description: Event data from DocuSign
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "processed"
+        '400':
+          description: Invalid webhook data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # =============================================================================
+  # UTILITY ENDPOINTS
+  # =============================================================================
+
+  /health:
+    get:
+      tags:
+        - Utility
+      summary: Health check
+      description: Check API health status
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  services:
+                    type: object
+                    properties:
+                      database:
+                        type: string
+                        enum: [healthy, degraded, unhealthy]
+                      docusign:
+                        type: string
+                        enum: [healthy, degraded, unhealthy]
+                      openai:
+                        type: string
+                        enum: [healthy, degraded, unhealthy]
+
+# =============================================================================
+# DATA FLOW DOCUMENTATION
+# =============================================================================
+
+# COMPLETE DATA FLOW SEQUENCE:
+
+# 1. DOCUMENT UPLOAD FLOW
+#    POST /documents (multipart/form-data)
+#    ↓
+#    File stored in S3 + Database record created
+#    ↓
+#    Workflow execution started
+#    ↓
+#    AI parsing initiated (OpenAI API call)
+#    ↓
+#    Document fields extracted and stored
+#    ↓
+#    DocuSign envelope created
+#    ↓
+#    Envelope sent to recipients
+#    ↓
+#    Status updated to 'sent'
+
+# 2. SIGNATURE COMPLETION FLOW
+#    DocuSign webhook received
+#    ↓
+#    POST /webhooks/docusign
+#    ↓
+#    Envelope status updated in database
+#    ↓
+#    Email notifications sent
+#    ↓
+#    Signed document downloaded from DocuSign
+#    ↓
+#    Signed document stored in S3
+#    ↓
+#    Status updated to 'completed'
+
+# 3. REAL-TIME UPDATES FLOW
+#    WebSocket connection established
+#    ↓
+#    Client subscribes to document/envelope updates
+#    ↓
+#    Server pushes status changes in real-time
+#    ↓
+#    Frontend updates UI automatically
+
+# =============================================================================
+# RATE LIMITING & PAGINATION
+# =============================================================================
+
+# Rate Limits:
+# - General API: 1000 requests/hour per user
+# - File uploads: 10 requests/minute per user
+# - Webhook endpoints: 100 requests/minute (no auth required)
+
+# Pagination:
+# - Default page size: 20 items
+# - Maximum page size: 100 items
+# - Response includes pagination metadata
+# - Uses offset-based pagination for simplicity
+
+# =============================================================================
+# ERROR HANDLING
+# =============================================================================
+
+# HTTP Status Codes Used:
+# - 200: Success
+# - 201: Created
+# - 202: Accepted (async processing)
+# - 400: Bad Request
+# - 401: Unauthorized
+# - 403: Forbidden
+# - 404: Not Found
+# - 409: Conflict
+# - 413: Payload Too Large
+# - 422: Unprocessable Entity
+# - 429: Too Many Requests
+# - 500: Internal Server Error
+# - 503: Service Unavailable
+
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+
+# Authentication:
+# - JWT tokens with 1 hour expiration
+# - Refresh tokens with 30 day expiration
+# - API keys for service-to-service communication
+
+# Authorization:
+# - Users can only access their own documents
+# - Admin users can access all documents
+# - Role-based permissions for different operations
+
+# Data Protection:
+# - All sensitive data encrypted at rest
+# - API keys encrypted in database
+# - File uploads scanned for malware
+# - Rate limiting to prevent abuse
+# - Request/response logging for audit trail
+
+security:
+  - BearerAuth: []

@@ -1,0 +1,463 @@
+# =============================================================================
+# DocuSign + Langflow Integration Code Examples
+# =============================================================================
+
+# 1. DOCUSIGN API CLIENT SETUP
+# =============================================================================
+
+import os
+import base64
+from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, Document, Signer, SignHere, Tabs, Recipients
+from docusign_esign.rest import ApiException
+import requests
+from typing import List, Dict, Any
+
+class DocuSignClient:
+    def __init__(self):
+        self.base_path = 'https://demo.docusign.net/restapi'  # Use https://www.docusign.net/restapi for production
+        self.oauth_base_path = 'account-d.docusign.com'  # Use account.docusign.com for production
+        self.redirect_uri = 'http://localhost:3000/ds/callback'
+        self.client_id = os.getenv('DOCUSIGN_INTEGRATION_KEY')
+        self.client_secret = os.getenv('DOCUSIGN_CLIENT_SECRET')
+        self.account_id = os.getenv('DOCUSIGN_ACCOUNT_ID')
+        
+    def get_access_token(self):
+        """Get OAuth access token for DocuSign API"""
+        url = f'https://{self.oauth_base_path}/oauth/token'
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        
+        data = {
+            'grant_type': 'authorization_code',
+            'code': 'authorization_code_from_oauth_flow',
+            'redirect_uri': self.redirect_uri,
+            'client_id': self.client_id,
+            'client_secret': self.client_secret
+        }
+        
+        response = requests.post(url, headers=headers, data=data)
+        return response.json()['access_token']
+    
+    def create_envelope(self, document_path: str, signers: List[Dict], document_name: str):
+        """Create and send DocuSign envelope"""
+        
+        # Read the document
+        with open(document_path, 'rb') as file:
+            content_bytes = file.read()
+        base64_file_content = base64.b64encode(content_bytes).decode('ascii')
+        
+        # Create the document object
+        document = Document(
+            document_base64=base64_file_content,
+            name=document_name,
+            file_extension='pdf',
+            document_id='1'
+        )
+        
+        # Create signers and their tabs
+        envelope_signers = []
+        for i, signer_info in enumerate(signers, 1):
+            signer = Signer(
+                email=signer_info['email'],
+                name=signer_info['name'],
+                recipient_id=str(i),
+                routing_order=str(i)
+            )
+            
+            # Create signature tabs based on AI-extracted positions
+            sign_here_tabs = []
+            for position in signer_info.get('signature_positions', []):
+                sign_here = SignHere(
+                    document_id='1',
+                    page_number=str(position['page']),
+                    x_position=str(position['x']),
+                    y_position=str(position['y'])
+                )
+                sign_here_tabs.append(sign_here)
+            
+            signer.tabs = Tabs(sign_here_tabs=sign_here_tabs)
+            envelope_signers.append(signer)
+        
+        # Create the envelope definition
+        envelope_definition = EnvelopeDefinition(
+            email_subject=f"Please sign: {document_name}",
+            documents=[document],
+            recipients=Recipients(signers=envelope_signers),
+            status='sent'  # Send immediately
+        )
+        
+        # Send the envelope
+        api_client = ApiClient(base_path=self.base_path)
+        api_client.set_default_header('Authorization', f'Bearer {self.get_access_token()}')
+        
+        envelopes_api = EnvelopesApi(api_client)
+        try:
+            results = envelopes_api.create_envelope(self.account_id, envelope_definition=envelope_definition)
+            return {
+                'envelope_id': results.envelope_id,
+                'status': results.status,
+                'status_date_time': results.status_date_time
+            }
+        except ApiException as e:
+            return {'error': f"Exception when calling DocuSign API: {e}"}
+
+
+# =============================================================================
+# 2. AI DOCUMENT PARSER (OpenAI Integration)
+# =============================================================================
+
+import openai
+from PyPDF2 import PdfReader
+import json
+from typing import Dict, List
+
+class DocumentParser:
+    def __init__(self):
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+    
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract text from PDF document"""
+        reader = PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    
+    def parse_document_with_ai(self, document_text: str) -> Dict[str, Any]:
+        """Use OpenAI to extract signing requirements from document"""
+        
+        prompt = f"""
+        Analyze this real estate document and extract the following information in JSON format:
+        
+        1. Required signers (names and roles: buyer, seller, agent, witness, etc.)
+        2. Signature locations (describe where signatures are needed)
+        3. Initial locations (where initials are required)
+        4. Date fields that need to be filled
+        5. Document type (purchase agreement, listing agreement, etc.)
+        6. Key terms (property address, price, dates)
+        
+        Document text:
+        {document_text}
+        
+        Return only valid JSON in this format:
+        {{
+            "document_type": "string",
+            "property_address": "string", 
+            "signers": [
+                {{
+                    "name": "string",
+                    "role": "buyer|seller|agent|witness",
+                    "email": "string (if found)"
+                }}
+            ],
+            "signature_fields": [
+                {{
+                    "page": 1,
+                    "description": "Buyer signature on purchase agreement",
+                    "signer_role": "buyer",
+                    "field_type": "signature"
+                }}
+            ],
+            "initial_fields": [
+                {{
+                    "page": 1,
+                    "description": "Buyer initials on terms section",
+                    "signer_role": "buyer",
+                    "field_type": "initial"
+                }}
+            ],
+            "date_fields": [
+                {{
+                    "page": 1,
+                    "description": "Contract date",
+                    "field_type": "date"
+                }}
+            ]
+        }}
+        """
+        
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=[
+                    {"role": "system", "content": "You are an expert real estate document analyzer. Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.1
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            return result
+            
+        except Exception as e:
+            return {"error": f"AI parsing failed: {str(e)}"}
+
+
+# =============================================================================
+# 3. LANGFLOW WORKFLOW INTEGRATION
+# =============================================================================
+
+import requests
+from typing import Dict, Any
+
+class LangflowWorkflow:
+    def __init__(self, langflow_url: str = "http://localhost:7860"):
+        self.base_url = langflow_url
+        self.docusign_client = DocuSignClient()
+        self.document_parser = DocumentParser()
+    
+    def process_document_workflow(self, file_path: str, agent_data: Dict) -> Dict[str, Any]:
+        """Complete workflow from document upload to DocuSign envelope creation"""
+        
+        workflow_result = {
+            "status": "processing",
+            "steps": [],
+            "envelope_id": None,
+            "error": None
+        }
+        
+        try:
+            # Step 1: Extract text from document
+            workflow_result["steps"].append("Extracting text from document...")
+            document_text = self.document_parser.extract_text_from_pdf(file_path)
+            
+            # Step 2: AI parsing to extract signing requirements
+            workflow_result["steps"].append("Analyzing document with AI...")
+            parsed_data = self.document_parser.parse_document_with_ai(document_text)
+            
+            if "error" in parsed_data:
+                workflow_result["error"] = parsed_data["error"]
+                return workflow_result
+            
+            # Step 3: Prepare signers data for DocuSign
+            workflow_result["steps"].append("Preparing DocuSign envelope...")
+            signers_data = []
+            
+            for signer in parsed_data["signers"]:
+                # Get additional signer info from agent input
+                signer_email = agent_data["recipients"].get(signer["role"], {}).get("email", "")
+                if not signer_email:
+                    continue
+                    
+                # Convert AI-identified signature positions to coordinates
+                signature_positions = []
+                for sig_field in parsed_data["signature_fields"]:
+                    if sig_field["signer_role"] == signer["role"]:
+                        # Estimate coordinates based on description
+                        # In production, you'd use more sophisticated PDF coordinate detection
+                        signature_positions.append({
+                            "page": sig_field["page"],
+                            "x": 100,  # Default position - would be calculated
+                            "y": 200
+                        })
+                
+                signers_data.append({
+                    "name": signer["name"],
+                    "email": signer_email,
+                    "signature_positions": signature_positions
+                })
+            
+            # Step 4: Create DocuSign envelope
+            workflow_result["steps"].append("Creating DocuSign envelope...")
+            envelope_result = self.docusign_client.create_envelope(
+                document_path=file_path,
+                signers=signers_data,
+                document_name=f"{parsed_data.get('document_type', 'Contract')} - {parsed_data.get('property_address', 'Property')}"
+            )
+            
+            if "error" in envelope_result:
+                workflow_result["error"] = envelope_result["error"]
+                return workflow_result
+            
+            # Step 5: Success
+            workflow_result["status"] = "completed"
+            workflow_result["envelope_id"] = envelope_result["envelope_id"]
+            workflow_result["steps"].append(f"Envelope created successfully: {envelope_result['envelope_id']}")
+            
+            return workflow_result
+            
+        except Exception as e:
+            workflow_result["error"] = f"Workflow failed: {str(e)}"
+            workflow_result["status"] = "failed"
+            return workflow_result
+    
+    def setup_reminder_automation(self, envelope_id: str):
+        """Set up automated reminders for envelope"""
+        # This would integrate with your task scheduler (Celery, etc.)
+        reminder_data = {
+            "envelope_id": envelope_id,
+            "reminder_interval": 48,  # hours
+            "max_reminders": 5
+        }
+        
+        # Schedule reminder task
+        # schedule_envelope_reminders.delay(reminder_data)
+        return {"status": "reminders_scheduled"}
+
+
+# =============================================================================
+# 4. WEBHOOK HANDLERS FOR DOCUSIGN EVENTS
+# =============================================================================
+
+from flask import Flask, request, jsonify
+import hmac
+import hashlib
+
+class DocuSignWebhookHandler:
+    def __init__(self, webhook_secret: str):
+        self.webhook_secret = webhook_secret
+    
+    def verify_webhook_signature(self, payload: str, signature: str) -> bool:
+        """Verify DocuSign webhook signature for security"""
+        expected_signature = hmac.new(
+            self.webhook_secret.encode('utf-8'),
+            payload.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(signature, expected_signature)
+    
+    def handle_envelope_completed(self, webhook_data: Dict) -> Dict:
+        """Handle envelope completion webhook"""
+        envelope_id = webhook_data.get('data', {}).get('envelopeId')
+        
+        # Download completed documents
+        # Store in database
+        # Send notification emails
+        # Update dashboard status
+        
+        return {
+            "status": "processed",
+            "envelope_id": envelope_id,
+            "action": "envelope_completed"
+        }
+
+
+# =============================================================================
+# 5. FASTAPI ENDPOINTS
+# =============================================================================
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import shutil
+import os
+
+app = FastAPI(title="Real Estate DocuSign Service API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Next.js frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize services
+langflow_workflow = LangflowWorkflow()
+webhook_handler = DocuSignWebhookHandler(os.getenv('DOCUSIGN_WEBHOOK_SECRET'))
+
+@app.post("/api/upload-document")
+async def upload_document(
+    file: UploadFile = File(...),
+    recipient_data: str = None  # JSON string of recipient info
+):
+    """Upload document and start processing workflow"""
+    
+    try:
+        # Save uploaded file
+        file_path = f"uploads/{file.filename}"
+        os.makedirs("uploads", exist_ok=True)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Parse recipient data
+        import json
+        recipients = json.loads(recipient_data) if recipient_data else {}
+        
+        # Start workflow
+        result = langflow_workflow.process_document_workflow(
+            file_path=file_path,
+            agent_data={"recipients": recipients}
+        )
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.post("/api/docusign-webhook")
+async def docusign_webhook(request_data: dict):
+    """Handle DocuSign webhook events"""
+    
+    try:
+        event_type = request_data.get('event')
+        
+        if event_type == 'envelope-completed':
+            result = webhook_handler.handle_envelope_completed(request_data)
+            return result
+        elif event_type == 'envelope-sent':
+            # Handle envelope sent event
+            pass
+        elif event_type == 'recipient-completed':
+            # Handle individual recipient completion
+            pass
+            
+        return {"status": "webhook_processed"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
+
+@app.get("/api/envelope-status/{envelope_id}")
+async def get_envelope_status(envelope_id: str):
+    """Get current status of DocuSign envelope"""
+    
+    # Query DocuSign API for envelope status
+    # Return status, signer progress, etc.
+    
+    return {
+        "envelope_id": envelope_id,
+        "status": "sent",
+        "signers": [
+            {"name": "John Buyer", "status": "completed"},
+            {"name": "Jane Seller", "status": "pending"}
+        ]
+    }
+
+
+# =============================================================================
+# 6. USAGE EXAMPLE
+# =============================================================================
+
+if __name__ == "__main__":
+    # Example usage of the complete workflow
+    
+    # Initialize the workflow
+    workflow = LangflowWorkflow()
+    
+    # Example agent data with recipient information
+    agent_data = {
+        "recipients": {
+            "buyer": {
+                "email": "buyer@example.com",
+                "name": "John Buyer"
+            },
+            "seller": {
+                "email": "seller@example.com", 
+                "name": "Jane Seller"
+            }
+        }
+    }
+    
+    # Process a document
+    result = workflow.process_document_workflow(
+        file_path="example_contract.pdf",
+        agent_data=agent_data
+    )
+    
+    print("Workflow Result:", result)
+    
+    if result["status"] == "completed":
+        # Set up automated reminders
+        reminder_result = workflow.setup_reminder_automation(result["envelope_id"])
+        print("Reminder Setup:", reminder_result)

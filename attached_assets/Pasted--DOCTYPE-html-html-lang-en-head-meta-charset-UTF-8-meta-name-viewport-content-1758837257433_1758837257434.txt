@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real Estate DocuSign Service Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            padding: 40px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #718096;
+            margin-bottom: 40px;
+            font-size: 1.2em;
+        }
+        
+        .architecture {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        .layer {
+            background: #f8fafc;
+            border-radius: 15px;
+            padding: 25px;
+            border: 2px solid #e2e8f0;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .layer:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+        }
+        
+        .layer-title {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 20px;
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 3px solid;
+        }
+        
+        .frontend .layer-title { border-bottom-color: #3182ce; }
+        .backend .layer-title { border-bottom-color: #38a169; }
+        .external .layer-title { border-bottom-color: #d69e2e; }
+        
+        .component {
+            background: white;
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: all 0.2s ease;
+        }
+        
+        .component:hover {
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .frontend .component { border-left-color: #3182ce; }
+        .backend .component { border-left-color: #38a169; }
+        .external .component { border-left-color: #d69e2e; }
+        
+        .component-name {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .component-desc {
+            color: #4a5568;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        
+        .tech-stack {
+            background: #1a202c;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.8em;
+            margin-top: 8px;
+            display: inline-block;
+        }
+        
+        .flow-diagram {
+            margin-top: 50px;
+            background: #f7fafc;
+            border-radius: 15px;
+            padding: 30px;
+            border: 2px dashed #cbd5e0;
+        }
+        
+        .flow-title {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #2d3748;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .flow-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        
+        .flow-step {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            position: relative;
+            border: 2px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        
+        .flow-step:hover {
+            border-color: #3182ce;
+            transform: scale(1.02);
+        }
+        
+        .step-number {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 15px;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        
+        .step-title {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+        
+        .step-desc {
+            color: #4a5568;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        
+        .arrows {
+            position: absolute;
+            top: 50%;
+            right: -15px;
+            transform: translateY(-50%);
+            color: #3182ce;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        
+        .flow-step:last-child .arrows {
+            display: none;
+        }
+        
+        .data-flow {
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        
+        .data-item {
+            flex: 1;
+            min-width: 150px;
+            text-align: center;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border-radius: 10px;
+            font-weight: 600;
+            position: relative;
+        }
+        
+        .data-arrow {
+            color: #3182ce;
+            font-size: 2em;
+            margin: 0 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .architecture {
+                grid-template-columns: 1fr;
+            }
+            
+            .flow-steps {
+                grid-template-columns: 1fr;
+            }
+            
+            .data-flow {
+                flex-direction: column;
+            }
+            
+            .data-arrow {
+                transform: rotate(90deg);
+            }
+        }
+        
+        .icon {
+            margin-right: 8px;
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏠 Real Estate DocuSign Service</h1>
+        <p class="subtitle">Automated Document Processing & E-Signature Workflow</p>
+        
+        <div class="architecture">
+            <div class="layer frontend">
+                <h2 class="layer-title">🎨 Frontend Layer</h2>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">⚛️</span>
+                        Next.js Portal
+                    </div>
+                    <div class="component-desc">
+                        Agent-facing web application for document uploads and status tracking
+                    </div>
+                    <div class="tech-stack">Next.js + React</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">🎨</span>
+                        UI Components
+                    </div>
+                    <div class="component-desc">
+                        Polished interface with file upload, recipient forms, and dashboard
+                    </div>
+                    <div class="tech-stack">TailwindCSS + shadcn</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">📊</span>
+                        Agent Dashboard
+                    </div>
+                    <div class="component-desc">
+                        Real-time status tracking: pending, in-progress, completed documents
+                    </div>
+                    <div class="tech-stack">React State + WebSockets</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">📱</span>
+                        Responsive Design
+                    </div>
+                    <div class="component-desc">
+                        Mobile-optimized for agents working on-the-go
+                    </div>
+                    <div class="tech-stack">Mobile-First CSS</div>
+                </div>
+            </div>
+            
+            <div class="layer backend">
+                <h2 class="layer-title">⚙️ Backend & AI Layer</h2>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">🔄</span>
+                        Langflow Orchestration
+                    </div>
+                    <div class="component-desc">
+                        Workflow automation: file processing → AI parsing → DocuSign integration
+                    </div>
+                    <div class="tech-stack">Langflow + Python</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">🤖</span>
+                        AI Document Parser
+                    </div>
+                    <div class="component-desc">
+                        Extract signer names, required fields, signatures, initials, dates
+                    </div>
+                    <div class="tech-stack">OpenAI GPT-4.1 / Ollama</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">🚀</span>
+                        API Gateway
+                    </div>
+                    <div class="component-desc">
+                        RESTful API for frontend communication and webhook handling
+                    </div>
+                    <div class="tech-stack">FastAPI / Node.js</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">💾</span>
+                        Database & Storage
+                    </div>
+                    <div class="component-desc">
+                        User data, document metadata, audit trails, and file storage
+                    </div>
+                    <div class="tech-stack">PostgreSQL + AWS S3</div>
+                </div>
+            </div>
+            
+            <div class="layer external">
+                <h2 class="layer-title">🌐 External Services</h2>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">📝</span>
+                        DocuSign API
+                    </div>
+                    <div class="component-desc">
+                        E-signature envelope creation, sending, and completion webhooks
+                    </div>
+                    <div class="tech-stack">DocuSign REST API</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">📧</span>
+                        Email Service
+                    </div>
+                    <div class="component-desc">
+                        Automated notifications, reminders, and signed document delivery
+                    </div>
+                    <div class="tech-stack">SendGrid / Postmark</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">☁️</span>
+                        Cloud Storage
+                    </div>
+                    <div class="component-desc">
+                        Secure document storage with versioning and compliance
+                    </div>
+                    <div class="tech-stack">AWS S3 / Google Cloud</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">🔒</span>
+                        Authentication
+                    </div>
+                    <div class="component-desc">
+                        Secure agent login and session management
+                    </div>
+                    <div class="tech-stack">Auth0 / Firebase Auth</div>
+                </div>
+                
+                <div class="component">
+                    <div class="component-name">
+                        <span class="icon">💳</span>
+                        Stripe Payments
+                    </div>
+                    <div class="component-desc">
+                        Subscription management, usage billing, and payment processing
+                    </div>
+                    <div class="tech-stack">Stripe API + Webhooks</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="flow-diagram">
+            <h2 class="flow-title">📋 End-to-End Workflow Process</h2>
+            
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="step-number">1</div>
+                    <div class="step-title">Document Upload</div>
+                    <div class="step-desc">Agent uploads contract PDF/Word and enters recipient details</div>
+                    <div class="arrows">→</div>
+                </div>
+                
+                <div class="flow-step">
+                    <div class="step-number">2</div>
+                    <div class="step-title">AI Processing</div>
+                    <div class="step-desc">OpenAI GPT-4.1 parses document and identifies signature fields</div>
+                    <div class="arrows">→</div>
+                </div>
+                
+                <div class="flow-step">
+                    <div class="step-number">3</div>
+                    <div class="step-title">Langflow Automation</div>
+                    <div class="step-desc">Workflow creates DocuSign envelope with extracted field mappings</div>
+                    <div class="arrows">→</div>
+                </div>
+                
+                <div class="flow-step">
+                    <div class="step-number">4</div>
+                    <div class="step-title">DocuSign Delivery</div>
+                    <div class="step-desc">Envelope sent to signers with automated reminder scheduling</div>
+                    <div class="arrows">→</div>
+                </div>
+                
+                <div class="flow-step">
+                    <div class="step-number">5</div>
+                    <div class="step-title">Signature Collection</div>
+                    <div class="step-desc">Clients sign documents electronically with progress tracking</div>
+                    <div class="arrows">→</div>
+                </div>
+                
+                <div class="flow-step">
+                    <div class="step-number">6</div>
+                    <div class="step-title">Completion & Delivery</div>
+                    <div class="step-desc">Webhook triggers final document delivery via email and dashboard</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="data-flow">
+            <div class="data-item">PDF Upload</div>
+            <div class="data-arrow">→</div>
+            <div class="data-item">AI Parsing</div>
+            <div class="data-arrow">→</div>
+            <div class="data-item">DocuSign API</div>
+            <div class="data-arrow">→</div>
+            <div class="data-item">E-Signatures</div>
+            <div class="data-arrow">→</div>
+            <div class="data-item">Signed Delivery</div>
+        </div>
+    </div>
+</body>
+</html>

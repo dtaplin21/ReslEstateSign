@@ -1,0 +1,658 @@
+-- =============================================================================
+-- Real Estate DocuSign Service - Database Schema
+-- PostgreSQL Database Design
+-- =============================================================================
+
+-- Enable UUID extension for unique identifiers
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- =============================================================================
+-- 1. USERS & AUTHENTICATION TABLES
+-- =============================================================================
+
+-- Real estate agents/users table
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20),
+    brokerage_name VARCHAR(255),
+    license_number VARCHAR(50),
+    is_active BOOLEAN DEFAULT true,
+    email_verified BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Indexes
+    CONSTRAINT email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+);
+
+-- User sessions for security
+CREATE TABLE user_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address INET,
+    user_agent TEXT
+);
+
+-- API keys for external integrations
+CREATE TABLE user_api_keys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service_name VARCHAR(50) NOT NULL, -- 'docusign', 'openai', etc.
+    encrypted_api_key TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE
+);
+
+-- =============================================================================
+-- 2. DOCUMENT MANAGEMENT TABLES
+-- =============================================================================
+
+-- Main documents table
+CREATE TABLE documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Document metadata
+    original_filename VARCHAR(500) NOT NULL,
+    file_path VARCHAR(1000) NOT NULL, -- S3/Cloud storage path
+    file_size BIGINT NOT NULL,
+    file_type VARCHAR(50) NOT NULL, -- 'pdf', 'docx', etc.
+    mime_type VARCHAR(100) NOT NULL,
+    checksum VARCHAR(64) NOT NULL, -- SHA-256 hash
+    
+    -- AI extracted information
+    document_type VARCHAR(100), -- 'purchase_agreement', 'listing_agreement', etc.
+    property_address TEXT,
+    contract_amount DECIMAL(15,2),
+    contract_date DATE,
+    
+    -- Processing status
+    status VARCHAR(50) NOT NULL DEFAULT 'uploaded', -- 'uploaded', 'processing', 'parsed', 'envelope_created', 'sent', 'completed', 'failed'
+    ai_parsed_at TIMESTAMP WITH TIME ZONE,
+    ai_parsing_status VARCHAR(50), -- 'pending', 'completed', 'failed'
+    ai_parsing_error TEXT,
+    
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- AI extracted document fields
+CREATE TABLE document_fields (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    
+    field_type VARCHAR(50) NOT NULL, -- 'signature', 'initial', 'date', 'text'
+    field_name VARCHAR(255) NOT NULL,
+    field_description TEXT,
+    page_number INTEGER NOT NULL,
+    x_coordinate INTEGER, -- PDF coordinates
+    y_coordinate INTEGER,
+    width INTEGER,
+    height INTEGER,
+    
+    -- Who should fill this field
+    signer_role VARCHAR(50), -- 'buyer', 'seller', 'agent', 'witness'
+    is_required BOOLEAN DEFAULT true,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Document versions for audit trail
+CREATE TABLE document_versions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    file_path VARCHAR(1000) NOT NULL,
+    file_size BIGINT NOT NULL,
+    checksum VARCHAR(64) NOT NULL,
+    change_description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(document_id, version_number)
+);
+
+-- =============================================================================
+-- 3. DOCUSIGN INTEGRATION TABLES
+-- =============================================================================
+
+-- DocuSign envelopes
+CREATE TABLE docusign_envelopes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- DocuSign envelope details
+    envelope_id VARCHAR(255) UNIQUE NOT NULL, -- DocuSign envelope ID
+    envelope_status VARCHAR(50) NOT NULL DEFAULT 'created', -- 'created', 'sent', 'delivered', 'completed', 'declined', 'voided'
+    email_subject VARCHAR(500),
+    email_message TEXT,
+    
+    -- Timestamps from DocuSign
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    last_modified_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Reminders
+    reminder_enabled BOOLEAN DEFAULT true,
+    reminder_delay INTEGER DEFAULT 48, -- hours
+    reminder_frequency INTEGER DEFAULT 48, -- hours
+    expire_enabled BOOLEAN DEFAULT true,
+    expire_after INTEGER DEFAULT 168, -- hours (7 days)
+    
+    -- Audit fields
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Envelope recipients (signers)
+CREATE TABLE envelope_recipients (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    envelope_id UUID NOT NULL REFERENCES docusign_envelopes(id) ON DELETE CASCADE,
+    
+    -- Recipient details
+    recipient_id VARCHAR(50) NOT NULL, -- DocuSign recipient ID
+    recipient_type VARCHAR(50) NOT NULL DEFAULT 'signer', -- 'signer', 'cc', 'agent'
+    routing_order INTEGER NOT NULL DEFAULT 1,
+    
+    -- Contact information
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    role VARCHAR(50), -- 'buyer', 'seller', 'agent', 'witness'
+    
+    -- Status tracking
+    status VARCHAR(50) NOT NULL DEFAULT 'created', -- 'created', 'sent', 'delivered', 'completed', 'declined', 'autoresponded'
+    signed_at TIMESTAMP WITH TIME ZONE,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Authentication
+    require_id_lookup BOOLEAN DEFAULT false,
+    require_phone_auth BOOLEAN DEFAULT false,
+    require_sms_auth BOOLEAN DEFAULT false,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(envelope_id, recipient_id)
+);
+
+-- Envelope status events (webhook events)
+CREATE TABLE envelope_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    envelope_id UUID NOT NULL REFERENCES docusign_envelopes(id) ON DELETE CASCADE,
+    
+    event_type VARCHAR(100) NOT NULL, -- 'envelope-sent', 'envelope-completed', 'recipient-completed', etc.
+    event_data JSONB NOT NULL,
+    docusign_event_id VARCHAR(255),
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Prevent duplicate webhook processing
+    UNIQUE(envelope_id, docusign_event_id)
+);
+
+-- =============================================================================
+-- 4. WORKFLOW & AUTOMATION TABLES
+-- =============================================================================
+
+-- Langflow workflow executions
+CREATE TABLE workflow_executions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    workflow_type VARCHAR(100) NOT NULL, -- 'document_processing', 'reminder_automation', etc.
+    status VARCHAR(50) NOT NULL DEFAULT 'started', -- 'started', 'running', 'completed', 'failed'
+    
+    -- Execution details
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    execution_time_ms INTEGER,
+    
+    -- Step tracking
+    total_steps INTEGER,
+    completed_steps INTEGER,
+    current_step VARCHAR(255),
+    
+    -- Results and errors
+    result_data JSONB,
+    error_message TEXT,
+    error_stack_trace TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Individual workflow steps
+CREATE TABLE workflow_steps (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    execution_id UUID NOT NULL REFERENCES workflow_executions(id) ON DELETE CASCADE,
+    
+    step_name VARCHAR(255) NOT NULL,
+    step_order INTEGER NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending', -- 'pending', 'running', 'completed', 'failed', 'skipped'
+    
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    execution_time_ms INTEGER,
+    
+    input_data JSONB,
+    output_data JSONB,
+    error_message TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Scheduled tasks (reminders, follow-ups)
+CREATE TABLE scheduled_tasks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    envelope_id UUID REFERENCES docusign_envelopes(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    task_type VARCHAR(100) NOT NULL, -- 'send_reminder', 'expire_envelope', 'follow_up'
+    status VARCHAR(50) NOT NULL DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed', 'cancelled'
+    
+    scheduled_for TIMESTAMP WITH TIME ZONE NOT NULL,
+    executed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Task configuration
+    task_data JSONB,
+    max_attempts INTEGER DEFAULT 3,
+    attempts INTEGER DEFAULT 0,
+    
+    -- Results
+    result_data JSONB,
+    error_message TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- 5. AUDIT & LOGGING TABLES
+-- =============================================================================
+
+-- Comprehensive audit log
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Who did what
+    user_id UUID REFERENCES users(id),
+    user_email VARCHAR(255),
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50) NOT NULL, -- 'document', 'envelope', 'user', etc.
+    resource_id UUID,
+    
+    -- What changed
+    old_values JSONB,
+    new_values JSONB,
+    changes JSONB, -- Diff of old vs new
+    
+    -- Context
+    ip_address INET,
+    user_agent TEXT,
+    session_id UUID,
+    request_id UUID,
+    
+    -- Metadata
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- System activity logs
+CREATE TABLE activity_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    log_level VARCHAR(20) NOT NULL DEFAULT 'INFO', -- 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'
+    component VARCHAR(100) NOT NULL, -- 'api', 'workflow', 'docusign', 'ai_parser', etc.
+    action VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    
+    -- Context
+    user_id UUID REFERENCES users(id),
+    document_id UUID REFERENCES documents(id),
+    envelope_id UUID REFERENCES docusign_envelopes(id),
+    
+    -- Technical details
+    execution_time_ms INTEGER,
+    error_code VARCHAR(50),
+    stack_trace TEXT,
+    request_data JSONB,
+    response_data JSONB,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- 6. SYSTEM CONFIGURATION TABLES
+-- =============================================================================
+
+-- System-wide settings
+CREATE TABLE system_settings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    setting_key VARCHAR(255) UNIQUE NOT NULL,
+    setting_value TEXT NOT NULL,
+    setting_type VARCHAR(50) NOT NULL DEFAULT 'string', -- 'string', 'integer', 'boolean', 'json'
+    description TEXT,
+    is_sensitive BOOLEAN DEFAULT false, -- For encrypted settings
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Email templates
+CREATE TABLE email_templates (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    template_key VARCHAR(255) UNIQUE NOT NULL,
+    template_name VARCHAR(255) NOT NULL,
+    subject_template TEXT NOT NULL,
+    body_template TEXT NOT NULL,
+    template_type VARCHAR(50) NOT NULL DEFAULT 'html', -- 'html', 'text'
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- 7. INDEXES FOR PERFORMANCE
+-- =============================================================================
+
+-- Users indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_active ON users(is_active);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+-- User sessions indexes
+CREATE INDEX idx_user_sessions_token ON user_sessions(session_token);
+CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX idx_user_sessions_expires ON user_sessions(expires_at);
+
+-- Documents indexes
+CREATE INDEX idx_documents_user_id ON documents(user_id);
+CREATE INDEX idx_documents_status ON documents(status);
+CREATE INDEX idx_documents_created_at ON documents(created_at);
+CREATE INDEX idx_documents_document_type ON documents(document_type);
+CREATE INDEX idx_documents_property_address ON documents USING gin(to_tsvector('english', property_address));
+
+-- Document fields indexes
+CREATE INDEX idx_document_fields_document_id ON document_fields(document_id);
+CREATE INDEX idx_document_fields_type ON document_fields(field_type);
+CREATE INDEX idx_document_fields_signer_role ON document_fields(signer_role);
+
+-- DocuSign envelopes indexes
+CREATE INDEX idx_docusign_envelopes_document_id ON docusign_envelopes(document_id);
+CREATE INDEX idx_docusign_envelopes_user_id ON docusign_envelopes(user_id);
+CREATE INDEX idx_docusign_envelopes_status ON docusign_envelopes(envelope_status);
+CREATE INDEX idx_docusign_envelopes_envelope_id ON docusign_envelopes(envelope_id);
+CREATE INDEX idx_docusign_envelopes_created_at ON docusign_envelopes(created_at);
+
+-- Envelope recipients indexes
+CREATE INDEX idx_envelope_recipients_envelope_id ON envelope_recipients(envelope_id);
+CREATE INDEX idx_envelope_recipients_email ON envelope_recipients(email);
+CREATE INDEX idx_envelope_recipients_status ON envelope_recipients(status);
+
+-- Envelope events indexes
+CREATE INDEX idx_envelope_events_envelope_id ON envelope_events(envelope_id);
+CREATE INDEX idx_envelope_events_type ON envelope_events(event_type);
+CREATE INDEX idx_envelope_events_created_at ON envelope_events(created_at);
+
+-- Workflow executions indexes
+CREATE INDEX idx_workflow_executions_document_id ON workflow_executions(document_id);
+CREATE INDEX idx_workflow_executions_user_id ON workflow_executions(user_id);
+CREATE INDEX idx_workflow_executions_status ON workflow_executions(status);
+CREATE INDEX idx_workflow_executions_started_at ON workflow_executions(started_at);
+
+-- Scheduled tasks indexes
+CREATE INDEX idx_scheduled_tasks_status ON scheduled_tasks(status);
+CREATE INDEX idx_scheduled_tasks_scheduled_for ON scheduled_tasks(scheduled_for);
+CREATE INDEX idx_scheduled_tasks_envelope_id ON scheduled_tasks(envelope_id);
+
+-- Audit logs indexes
+CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_resource_type ON audit_logs(resource_type);
+CREATE INDEX idx_audit_logs_resource_id ON audit_logs(resource_id);
+CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
+
+-- Activity logs indexes
+CREATE INDEX idx_activity_logs_component ON activity_logs(component);
+CREATE INDEX idx_activity_logs_log_level ON activity_logs(log_level);
+CREATE INDEX idx_activity_logs_created_at ON activity_logs(created_at);
+CREATE INDEX idx_activity_logs_user_id ON activity_logs(user_id);
+
+-- =============================================================================
+-- 8. TRIGGERS FOR AUTO-UPDATING TIMESTAMPS
+-- =============================================================================
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$ language 'plpgsql';
+
+-- Apply triggers to tables with updated_at columns
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_docusign_envelopes_updated_at BEFORE UPDATE ON docusign_envelopes
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_envelope_recipients_updated_at BEFORE UPDATE ON envelope_recipients
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_scheduled_tasks_updated_at BEFORE UPDATE ON scheduled_tasks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_system_settings_updated_at BEFORE UPDATE ON system_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_email_templates_updated_at BEFORE UPDATE ON email_templates
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- =============================================================================
+-- 9. STORED PROCEDURES FOR COMMON OPERATIONS
+-- =============================================================================
+
+-- Get document status with all related information
+CREATE OR REPLACE FUNCTION get_document_status(doc_id UUID)
+RETURNS TABLE(
+    document_id UUID,
+    document_name VARCHAR,
+    document_status VARCHAR,
+    envelope_id VARCHAR,
+    envelope_status VARCHAR,
+    total_signers INTEGER,
+    completed_signers INTEGER,
+    created_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+) AS $
+BEGIN
+    RETURN QUERY
+    SELECT 
+        d.id,
+        d.original_filename,
+        d.status,
+        de.envelope_id,
+        de.envelope_status,
+        COUNT(er.id)::INTEGER as total_signers,
+        COUNT(CASE WHEN er.status = 'completed' THEN 1 END)::INTEGER as completed_signers,
+        d.created_at,
+        de.completed_at
+    FROM documents d
+    LEFT JOIN docusign_envelopes de ON d.id = de.document_id
+    LEFT JOIN envelope_recipients er ON de.id = er.envelope_id
+    WHERE d.id = doc_id
+    GROUP BY d.id, d.original_filename, d.status, de.envelope_id, de.envelope_status, d.created_at, de.completed_at;
+END;
+$ LANGUAGE plpgsql;
+
+-- Get user dashboard data
+CREATE OR REPLACE FUNCTION get_user_dashboard(user_uuid UUID)
+RETURNS TABLE(
+    total_documents INTEGER,
+    pending_signatures INTEGER,
+    completed_documents INTEGER,
+    documents_this_month INTEGER,
+    recent_activity JSONB
+) AS $
+BEGIN
+    RETURN QUERY
+    SELECT 
+        COUNT(d.id)::INTEGER as total_documents,
+        COUNT(CASE WHEN de.envelope_status IN ('sent', 'delivered') THEN 1 END)::INTEGER as pending_signatures,
+        COUNT(CASE WHEN de.envelope_status = 'completed' THEN 1 END)::INTEGER as completed_documents,
+        COUNT(CASE WHEN d.created_at >= date_trunc('month', CURRENT_DATE) THEN 1 END)::INTEGER as documents_this_month,
+        jsonb_agg(
+            jsonb_build_object(
+                'document_name', d.original_filename,
+                'status', d.status,
+                'created_at', d.created_at,
+                'envelope_status', de.envelope_status
+            ) ORDER BY d.created_at DESC
+        ) FILTER (WHERE d.id IS NOT NULL) as recent_activity
+    FROM documents d
+    LEFT JOIN docusign_envelopes de ON d.id = de.document_id
+    WHERE d.user_id = user_uuid;
+END;
+$ LANGUAGE plpgsql;
+
+-- Clean up expired sessions
+CREATE OR REPLACE FUNCTION cleanup_expired_sessions()
+RETURNS INTEGER AS $
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM user_sessions 
+    WHERE expires_at < CURRENT_TIMESTAMP;
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- 10. INITIAL DATA SEEDING
+-- =============================================================================
+
+-- Insert default system settings
+INSERT INTO system_settings (setting_key, setting_value, setting_type, description) VALUES
+('docusign_reminder_interval', '48', 'integer', 'Default reminder interval in hours'),
+('max_file_size_mb', '50', 'integer', 'Maximum file size for uploads in MB'),
+('supported_file_types', '["pdf", "docx", "doc"]', 'json', 'Supported file types for upload'),
+('ai_parsing_timeout', '300', 'integer', 'AI parsing timeout in seconds'),
+('envelope_expiry_days', '30', 'integer', 'Default envelope expiry in days'),
+('max_reminders', '5', 'integer', 'Maximum number of reminders to send');
+
+-- Insert default email templates
+INSERT INTO email_templates (template_key, template_name, subject_template, body_template, template_type) VALUES
+('envelope_sent', 'Envelope Sent Notification', 'Documents sent for signature: {{document_name}}', 
+'<p>Your documents have been sent for signature.</p>
+<p><strong>Document:</strong> {{document_name}}</p>
+<p><strong>Recipients:</strong> {{recipient_list}}</p>
+<p><strong>Sent:</strong> {{sent_date}}</p>
+<p>You will receive notifications as recipients complete their signatures.</p>', 'html'),
+
+('envelope_completed', 'Documents Completed', 'All signatures completed: {{document_name}}', 
+'<p>Great news! All signatures have been completed for your document.</p>
+<p><strong>Document:</strong> {{document_name}}</p>
+<p><strong>Completed:</strong> {{completed_date}}</p>
+<p>You can download the completed document from your dashboard.</p>', 'html'),
+
+('reminder_notification', 'Signature Reminder', 'Reminder: Please sign {{document_name}}', 
+'<p>This is a friendly reminder that you have a document waiting for your signature.</p>
+<p><strong>Document:</strong> {{document_name}}</p>
+<p><strong>From:</strong> {{sender_name}}</p>
+<p>Please click the link in your original email to complete the signing process.</p>', 'html');
+
+-- =============================================================================
+-- 11. SAMPLE QUERIES FOR TESTING
+-- =============================================================================
+
+-- Example: Create a test user
+/*
+INSERT INTO users (email, password_hash, first_name, last_name, brokerage_name) 
+VALUES (
+    'agent@example.com', 
+    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewYo6tBb8n/pQIQO', -- 'password123' hashed
+    'John', 
+    'Agent', 
+    'Premier Realty'
+);
+*/
+
+-- Example: Get all pending documents for a user
+/*
+SELECT 
+    d.original_filename,
+    d.status,
+    de.envelope_status,
+    COUNT(er.id) as total_recipients,
+    COUNT(CASE WHEN er.status = 'completed' THEN 1 END) as completed_recipients
+FROM documents d
+LEFT JOIN docusign_envelopes de ON d.id = de.document_id
+LEFT JOIN envelope_recipients er ON de.id = er.envelope_id
+WHERE d.user_id = 'user-uuid-here'
+AND de.envelope_status IN ('sent', 'delivered')
+GROUP BY d.id, d.original_filename, d.status, de.envelope_status;
+*/
+
+-- =============================================================================
+-- 12. DATABASE MAINTENANCE PROCEDURES
+-- =============================================================================
+
+-- Procedure to archive old completed envelopes
+CREATE OR REPLACE FUNCTION archive_old_envelopes(days_old INTEGER DEFAULT 365)
+RETURNS INTEGER AS $
+DECLARE
+    archived_count INTEGER;
+BEGIN
+    -- Move old completed envelopes to archive table (would need to create archive tables)
+    -- For now, just update their status
+    UPDATE docusign_envelopes 
+    SET envelope_status = 'archived'
+    WHERE envelope_status = 'completed' 
+    AND completed_at < CURRENT_DATE - INTERVAL '1 day' * days_old;
+    
+    GET DIAGNOSTICS archived_count = ROW_COUNT;
+    RETURN archived_count;
+END;
+$ LANGUAGE plpgsql;
+
+-- Procedure to clean up old activity logs
+CREATE OR REPLACE FUNCTION cleanup_old_logs(days_old INTEGER DEFAULT 90)
+RETURNS INTEGER AS $
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM activity_logs 
+    WHERE created_at < CURRENT_DATE - INTERVAL '1 day' * days_old
+    AND log_level NOT IN ('ERROR', 'FATAL');
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- END OF SCHEMA
+-- =============================================================================
+
+-- Grant permissions (adjust as needed for your environment)
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO your_app_user;
+-- GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO your_app_user;
