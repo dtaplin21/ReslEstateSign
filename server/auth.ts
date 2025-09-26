@@ -6,18 +6,9 @@ import { storage } from "./storage";
 
 // Environment-aware session configuration for Vercel
 const getSessionStore = async () => {
-  if (process.env.DATABASE_URL) {
-    // Use database store when available (PostgreSQL)
-    const connectPg = await import("connect-pg-simple");
-    const pgSession = connectPg.default(session);
-    return new pgSession({
-      conString: process.env.DATABASE_URL,
-      createTableIfMissing: true,
-    });
-  } else {
-    // Fallback to memory store (not recommended for production)
-    return new session.MemoryStore();
-  }
+  // Use memory store for now - in production Vercel deployment, 
+  // configure with your preferred session store (Redis, etc.)
+  return new session.MemoryStore();
 };
 
 export async function setupAuth(app: Express): Promise<void> {
