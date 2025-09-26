@@ -5,7 +5,7 @@ import path from "path";
 import Stripe from "stripe";
 import multer from "multer";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated } from "./auth";
 import { parseRealEstateDocument } from "./openai";
 import { docusignService } from "./docusign";
 import { sendDocumentNotification, sendDocumentCompletedNotification, sendUsageAlertNotification, sendDocumentFailedNotification, sendDocumentProcessingNotification, sendSigningReminderNotification } from "./sendgrid";
@@ -13,7 +13,7 @@ import { insertRecipientSchema, insertDocumentSchema, insertDocumentRecipientSch
 
 // Initialize Stripe
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-08-27.basil",
+  apiVersion: "2024-06-20",
 }) : null;
 
 // Function to check and send usage alerts
@@ -83,7 +83,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Serve uploaded files
   app.use('/uploads', isAuthenticated, async (req: any, res, next) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const requestedPath = req.path;
       const requestedUserId = requestedPath.split('/')[1];
       
@@ -120,7 +120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
@@ -132,7 +132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dashboard data
   app.get('/api/dashboard', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const currentMonth = new Date().toISOString().slice(0, 7);
       
       const [documents, usage] = await Promise.all([
@@ -163,7 +163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Recipients routes
   app.get('/api/recipients', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const recipients = await storage.getRecipients(userId);
       res.json(recipients);
     } catch (error) {
@@ -174,7 +174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/recipients', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const recipientData = insertRecipientSchema.parse({ ...req.body, userId });
       const recipient = await storage.createRecipient(recipientData);
       res.json(recipient);
@@ -207,7 +207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Documents routes
   app.get('/api/documents', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const documents = await storage.getDocuments(userId);
       res.json(documents);
     } catch (error) {
@@ -232,7 +232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Document upload and processing
   app.post('/api/documents/upload', isAuthenticated, upload.single('document'), async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const file = req.file;
       const { emailSubject, emailMessage, recipients: recipientsData } = req.body;
 
@@ -284,8 +284,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.user.claims?.email) {
         try {
           await sendDocumentProcessingNotification(
-            req.user.claims.email,
-            req.user.claims?.first_name || 'Agent',
+            req.user.email,
+            req.user?.firstName || 'Agent',
             document.name,
             'processing'
           );
@@ -342,11 +342,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Send pending status notification to agent
-        if (req.user.claims?.email) {
+        if (req.user?.email) {
           try {
             await sendDocumentProcessingNotification(
-              req.user.claims.email,
-              req.user.claims?.first_name || 'Agent',
+              req.user.email,
+              req.user?.firstName || 'Agent',
               document.name,
               'pending'
             );
@@ -440,7 +440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 recipient.email,
                 recipient.name,
                 document.name,
-                req.user.claims?.first_name || 'Agent',
+                req.user?.firstName || 'Agent',
                 document.emailMessage || undefined
               );
             }
@@ -450,11 +450,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await storage.updateDocument(document.id, { status: 'failed' });
             
             // Send failure notification to agent
-            if (req.user.claims?.email) {
+            if (req.user?.email) {
               try {
                 await sendDocumentFailedNotification(
-                  req.user.claims.email,
-                  req.user.claims?.first_name || 'Agent',
+                  req.user.email,
+                  req.user?.firstName || 'Agent',
                   document.name,
                   'Envelope creation failed: ' + (docusignError as Error).message
                 );
@@ -470,11 +470,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateDocument(document.id, { status: 'failed' });
         
         // Send failure notification to agent
-        if (req.user.claims?.email) {
+        if (req.user?.email) {
           try {
             await sendDocumentFailedNotification(
-              req.user.claims.email,
-              req.user.claims?.first_name || 'Agent',
+              req.user.email,
+              req.user?.firstName || 'Agent',
               document.name,
               'AI processing failed: ' + (aiError as Error).message
             );
@@ -507,7 +507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.post('/api/get-or-create-subscription', isAuthenticated, async (req: any, res) => {
       try {
         const { planId } = req.body;
-        const userId = req.user.claims.sub;
+        const userId = req.user.id;
         
         // Validate planId
         if (!planId || !['starter', 'professional', 'enterprise'].includes(planId)) {
@@ -621,7 +621,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Billing history
   app.get('/api/billing/history', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const billingHistory = await storage.getBillingHistory(userId);
       res.json(billingHistory);
     } catch (error) {
@@ -633,7 +633,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Usage monitoring and alerts
   app.get('/api/usage/current', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const currentMonth = new Date().toISOString().slice(0, 7);
       const usage = await storage.getUsageForMonth(userId, currentMonth);
       
@@ -673,7 +673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Reminder system endpoint
   app.post('/api/reminders/send', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { daysThreshold = 3 } = req.body; // Default to 3 days
       
       // Get all pending documents for this user
@@ -717,7 +717,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 docRecipient.recipient.email,
                 docRecipient.recipient.name,
                 document.name,
-                req.user.claims?.first_name || 'Agent',
+                req.user?.firstName || 'Agent',
                 daysWaiting
               );
               
@@ -725,11 +725,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // Record the reminder
                 await storage.createEmailNotification({
                   userId,
-                  notificationType: 'signing_reminder',
+                  emailType: 'signing_reminder',
                   recipientEmail: docRecipient.recipient.email,
                   subject: `Reminder: Please sign ${document.name}`,
                   status: 'sent',
-                  metadata: { documentId: document.id, daysWaiting },
+                  documentId: document.id,
                   sentAt: new Date(),
                 });
                 remindersSent++;
