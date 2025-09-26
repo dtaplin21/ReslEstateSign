@@ -80,6 +80,7 @@ interface SubscriptionPlan {
 export default function Subscribe() {
   const [clientSecret, setClientSecret] = useState("");
   const [selectedPlan, setSelectedPlan] = useState("professional");
+  const [isCreatingSubscription, setIsCreatingSubscription] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -88,41 +89,51 @@ export default function Subscribe() {
     queryKey: ["/api/subscription-plans"],
   });
 
-  useEffect(() => {
-    // Only create subscription once a plan is selected
-    if (selectedPlan) {
-      apiRequest("POST", "/api/get-or-create-subscription", { planId: selectedPlan })
-        .then((res) => res.json())
-        .then((data) => {
-          setClientSecret(data.clientSecret);
-        })
-        .catch((error) => {
-          toast({
-            title: "Error",
-            description: "Failed to initialize subscription. Please try again.",
-            variant: "destructive",
-          });
-          console.error("Subscription error:", error);
-        });
-    }
-  }, [selectedPlan, toast]);
-
-  if (!clientSecret) {
+  // Handle missing Stripe configuration FIRST
+  if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
     return (
       <div className="min-h-screen flex">
         <Sidebar />
         <main className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" aria-label="Loading"/>
-            <p className="text-muted-foreground">Initializing subscription...</p>
-          </div>
+          <Card className="max-w-md mx-auto">
+            <CardHeader>
+              <CardTitle className="text-center text-destructive">Stripe Not Configured</CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <p className="text-muted-foreground">
+                Payment processing is not available. Please contact support to set up your subscription.
+              </p>
+              <Button variant="outline" onClick={() => setLocation('/billing')}>
+                Back to Billing
+              </Button>
+            </CardContent>
+          </Card>
         </main>
       </div>
     );
   }
 
-  // Handle missing Stripe configuration
-  if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
+  const createSubscription = async () => {
+    if (!selectedPlan) return;
+    
+    setIsCreatingSubscription(true);
+    try {
+      const response = await apiRequest("POST", "/api/get-or-create-subscription", { planId: selectedPlan });
+      const data = await response.json();
+      setClientSecret(data.clientSecret);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to initialize subscription. Please try again.",
+        variant: "destructive",
+      });
+      console.error("Subscription error:", error);
+    } finally {
+      setIsCreatingSubscription(false);
+    }
+  };
+
+  if (plansLoading) {
     return (
       <div className="min-h-screen flex">
         <Sidebar />
@@ -242,6 +253,32 @@ export default function Subscribe() {
               </Card>
             ))}
           </div>
+
+          {/* Continue Button */}
+          <Card className="max-w-2xl mx-auto">
+            <CardContent className="flex items-center justify-between p-6">
+              <div>
+                <h4 className="font-medium">Ready to subscribe?</h4>
+                <p className="text-sm text-muted-foreground">
+                  You've selected the {pricingPlans.find(p => p.id === selectedPlan)?.name} plan
+                </p>
+              </div>
+              <Button 
+                onClick={createSubscription}
+                disabled={isCreatingSubscription}
+                data-testid="button-continue-to-payment"
+              >
+                {isCreatingSubscription ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin mr-2"></i>
+                    Preparing...
+                  </>
+                ) : (
+                  'Continue to Payment'
+                )}
+              </Button>
+            </CardContent>
+          </Card>
 
           {/* Payment Form */}
           {clientSecret && selectedPlan && (

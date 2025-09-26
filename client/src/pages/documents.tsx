@@ -20,7 +20,7 @@ export default function Documents() {
   const filteredDocuments = Array.isArray(documents) ? documents.filter((doc: any) => {
     const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          doc.propertyAddress?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = !statusFilter || doc.status === statusFilter;
+    const matchesStatus = !statusFilter || statusFilter === 'all' || doc.status === statusFilter;
     return matchesSearch && matchesStatus;
   }) : [];
 
@@ -51,7 +51,7 @@ export default function Documents() {
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Status</SelectItem>
+                  <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="processing">Processing</SelectItem>

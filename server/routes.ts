@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { promises as fs } from "fs";
+import path from "path";
 import Stripe from "stripe";
 import multer from "multer";
 import { storage } from "./storage";
@@ -29,9 +31,64 @@ const upload = multer({
   },
 });
 
+// Helper function to save uploaded file
+async function saveUploadedFile(fileBuffer: Buffer, originalName: string, userId: string): Promise<{ filePath: string; fileUrl: string }> {
+  const uploadsDir = path.join(process.cwd(), 'uploads', userId);
+  await fs.mkdir(uploadsDir, { recursive: true });
+  
+  const timestamp = Date.now();
+  const sanitizedName = originalName.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const fileName = `${timestamp}_${sanitizedName}`;
+  const filePath = path.join(uploadsDir, fileName);
+  
+  await fs.writeFile(filePath, fileBuffer);
+  
+  return {
+    filePath: filePath,
+    fileUrl: `/uploads/${userId}/${fileName}`
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+  
+  // Serve uploaded files
+  app.use('/uploads', isAuthenticated, async (req: any, res, next) => {
+    try {
+      const userId = req.user.claims.sub;
+      const requestedPath = req.path;
+      const requestedUserId = requestedPath.split('/')[1];
+      
+      // Only allow users to access their own files
+      if (userId !== requestedUserId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Sanitize and normalize the path
+      const relativePath = req.path.replace(/^\/+/, ''); // Remove leading slashes
+      const absolutePath = path.join(process.cwd(), 'uploads', relativePath);
+      const basePath = path.join(process.cwd(), 'uploads', requestedUserId);
+      
+      // Ensure the resolved path is within the user's directory
+      if (!absolutePath.startsWith(basePath + path.sep) && absolutePath !== basePath) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Attach the safe path to the request
+      (req as any).safePath = absolutePath;
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+  }, (req: any, res) => {
+    // Serve static files using the safe path
+    res.sendFile((req as any).safePath, (err) => {
+      if (err) {
+        res.status(404).json({ message: "File not found" });
+      }
+    });
+  });
 
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
@@ -165,18 +222,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: 1,
       });
 
+      // Save file to disk
+      const { filePath, fileUrl } = await saveUploadedFile(file.buffer, file.originalname, userId);
+
       // Create document record
       const documentData = {
         userId,
         name: file.originalname.replace('.pdf', ''),
         filename: file.originalname,
         fileSize: file.size,
+        filePath: filePath,
+        fileUrl: fileUrl,
         emailSubject: emailSubject || `Please sign: ${file.originalname}`,
         emailMessage: emailMessage || '',
         status: 'processing',
       };
 
       const document = await storage.createDocument(documentData);
+      console.log(`Document saved: ${document.id} at ${filePath}`);
 
       // Process document with AI in background
       try {
@@ -188,8 +251,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           count: 1,
         });
 
-        // Convert PDF to text (simplified - in production use proper PDF parsing)
-        const documentText = file.buffer.toString('utf-8', 0, Math.min(file.buffer.length, 10000));
+        // Extract text from PDF using dynamic import to avoid initialization issues
+        let documentText = '';
+        try {
+          const pdfParse = (await import('pdf-parse')).default;
+          const pdfData = await pdfParse(file.buffer);
+          documentText = pdfData.text;
+          console.log(`Extracted ${documentText.length} characters from PDF: ${file.originalname}`);
+        } catch (pdfError) {
+          console.error("PDF parsing error, falling back to basic text extraction:", pdfError);
+          // Fallback to basic text extraction
+          documentText = file.buffer.toString('utf-8', 0, Math.min(file.buffer.length, 10000));
+        }
+        
         const aiParsingData = await parseRealEstateDocument(documentText, file.originalname);
 
         // Update document with AI parsing results
@@ -204,12 +278,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Parse recipients data if provided
         if (recipientsData) {
           const recipients = JSON.parse(recipientsData);
+          
+          // Fetch existing recipients once and index by email for efficiency
+          const existingRecipients = await storage.getRecipients(userId);
+          const recipientsByEmail = existingRecipients.reduce((acc, r) => {
+            acc[r.email] = r;
+            return acc;
+          }, {} as Record<string, any>);
+          
           for (let i = 0; i < recipients.length; i++) {
             const recipient = recipients[i];
             
             // Create or find recipient
-            let existingRecipient = await storage.getRecipients(userId);
-            let recipientRecord = existingRecipient.find(r => r.email === recipient.email);
+            let recipientRecord = recipientsByEmail[recipient.email];
             
             if (!recipientRecord) {
               recipientRecord = await storage.createRecipient({
@@ -219,6 +300,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 phone: recipient.phone || '',
                 role: recipient.role,
               });
+              // Add to cache for potential duplicate emails in the same request
+              recipientsByEmail[recipient.email] = recipientRecord;
             }
 
             // Add to document recipients
@@ -302,7 +385,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   if (stripe) {
     app.post('/api/get-or-create-subscription', isAuthenticated, async (req: any, res) => {
       try {
+        const { planId } = req.body;
         const userId = req.user.claims.sub;
+        
+        // Validate planId
+        if (!planId || !['starter', 'professional', 'enterprise'].includes(planId)) {
+          return res.status(400).json({ message: "Invalid plan ID" });
+        }
+
         let user = await storage.getUser(userId);
 
         if (!user) {
@@ -328,13 +418,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: 'No user email on file' });
         }
 
-        const customer = await stripe.customers.create({
-          email: user.email,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        });
+        // Create or retrieve customer
+        let customer;
+        if (user.stripeCustomerId) {
+          customer = await stripe.customers.retrieve(user.stripeCustomerId);
+        } else {
+          customer = await stripe.customers.create({
+            email: user.email,
+            name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+          });
+        }
 
-        // Use default price ID or from environment
-        const priceId = process.env.STRIPE_PRICE_ID || 'price_default';
+        // Map planId to Stripe price IDs (using environment variables or defaults)
+        const priceMapping = {
+          starter: process.env.STRIPE_STARTER_PRICE_ID || 'price_starter_default',
+          professional: process.env.STRIPE_PROFESSIONAL_PRICE_ID || 'price_professional_default', 
+          enterprise: process.env.STRIPE_ENTERPRISE_PRICE_ID || 'price_enterprise_default'
+        };
+
+        const priceId = priceMapping[planId as keyof typeof priceMapping];
+
+        console.log(`Creating subscription for user ${userId} with plan ${planId} and price ${priceId}`);
 
         const subscription = await stripe.subscriptions.create({
           customer: customer.id,
