@@ -239,6 +239,65 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(subscriptionPlans).orderBy(subscriptionPlans.price);
   }
 
+  async getUserSubscriptionPlan(userId: string): Promise<SubscriptionPlan | null> {
+    const user = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (user.length === 0) return null;
+    
+    if (!user[0].subscriptionPlan) return null;
+    
+    const plan = await db.select().from(subscriptionPlans).where(eq(subscriptionPlans.id, user[0].subscriptionPlan)).limit(1);
+    return plan.length > 0 ? plan[0] : null;
+  }
+
+  // Usage enforcement functions
+  async checkUsageLimits(userId: string, recordType: 'document' | 'envelope' | 'ai_request'): Promise<{ allowed: boolean; current: number; limit: number; message?: string }> {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const usage = await this.getUsageForMonth(userId, currentMonth);
+    const plan = await this.getUserSubscriptionPlan(userId);
+    
+    if (!plan) {
+      return { allowed: false, current: 0, limit: 0, message: "No subscription plan found" };
+    }
+
+    let current: number, limit: number;
+    switch (recordType) {
+      case 'document':
+        current = usage.documents;
+        limit = plan.documentsLimit;
+        break;
+      case 'envelope':
+        current = usage.envelopes;
+        limit = plan.envelopesLimit;
+        break;
+      case 'ai_request':
+        current = usage.aiRequests;
+        limit = plan.aiRequestsLimit;
+        break;
+    }
+
+    const allowed = current < limit;
+    const message = allowed ? undefined : `You have reached your ${recordType} limit of ${limit} for this month. Upgrade your plan to continue.`;
+    
+    return { allowed, current, limit, message };
+  }
+
+  async canPerformAction(userId: string, actionType: 'upload_document' | 'create_envelope' | 'ai_request'): Promise<{ allowed: boolean; message?: string }> {
+    // Map action types to record types
+    const recordTypeMap: Record<string, 'document' | 'envelope' | 'ai_request'> = {
+      'upload_document': 'document',
+      'create_envelope': 'envelope', 
+      'ai_request': 'ai_request'
+    };
+
+    const recordType = recordTypeMap[actionType];
+    if (!recordType) {
+      return { allowed: false, message: "Invalid action type" };
+    }
+
+    const result = await this.checkUsageLimits(userId, recordType);
+    return { allowed: result.allowed, message: result.message };
+  }
+
   async getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined> {
     const [plan] = await db.select().from(subscriptionPlans).where(eq(subscriptionPlans.id, id));
     return plan;

@@ -213,6 +213,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
+      // Check usage limits before processing
+      const canUpload = await storage.canPerformAction(userId, 'upload_document');
+      if (!canUpload.allowed) {
+        return res.status(403).json({ 
+          message: canUpload.message || "Upload limit exceeded",
+          code: "USAGE_LIMIT_EXCEEDED"
+        });
+      }
+
       // Record document usage
       const currentMonth = new Date().toISOString().slice(0, 7);
       await storage.recordUsage({
@@ -243,14 +252,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Process document with AI in background
       try {
-        // Record AI usage
-        await storage.recordUsage({
-          userId,
-          recordType: "ai_request",
-          recordMonth: currentMonth,
-          count: 1,
-        });
-
         // Extract text from PDF using dynamic import to avoid initialization issues
         let documentText = '';
         try {
@@ -264,7 +265,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           documentText = file.buffer.toString('utf-8', 0, Math.min(file.buffer.length, 10000));
         }
         
+        // Check AI request limits before processing
+        const canUseAI = await storage.canPerformAction(userId, 'ai_request');
+        if (!canUseAI.allowed) {
+          await storage.updateDocument(document.id, { status: 'failed' });
+          return res.status(403).json({ 
+            message: canUseAI.message || "AI request limit exceeded",
+            code: "AI_LIMIT_EXCEEDED"
+          });
+        }
+
         const aiParsingData = await parseRealEstateDocument(documentText, file.originalname);
+
+        // Record AI usage
+        await storage.recordUsage({
+          userId,
+          recordType: 'ai_request',
+          recordMonth: currentMonth,
+          count: 1,
+        });
 
         // Update document with AI parsing results
         await storage.updateDocument(document.id, {
@@ -314,6 +333,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Create DocuSign envelope
           try {
+            // Check envelope creation limits
+            const canCreateEnvelope = await storage.canPerformAction(userId, 'create_envelope');
+            if (!canCreateEnvelope.allowed) {
+              await storage.updateDocument(document.id, { status: 'failed' });
+              return res.status(403).json({ 
+                message: canCreateEnvelope.message || "Envelope creation limit exceeded",
+                code: "ENVELOPE_LIMIT_EXCEEDED"
+              });
+            }
+
             const envelope = await docusignService.createEnvelope({
               documentName: document.name,
               documentContent: file.buffer,
@@ -327,18 +356,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
               })),
             });
 
+            // Record envelope usage after successful creation
+            await storage.recordUsage({
+              userId,
+              recordType: 'envelope',
+              recordMonth: currentMonth,
+              count: 1,
+            });
+
             // Update document with envelope ID
             await storage.updateDocument(document.id, {
               docusignEnvelopeId: envelope.envelopeId,
               status: 'pending',
-            });
-
-            // Record envelope usage
-            await storage.recordUsage({
-              userId,
-              recordType: "envelope",
-              recordMonth: currentMonth,
-              count: 1,
             });
 
             // Send notification emails
@@ -516,17 +545,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentMonth = new Date().toISOString().slice(0, 7);
       const usage = await storage.getUsageForMonth(userId, currentMonth);
       
-      // Get user's plan limits (would come from subscription plan)
-      const planLimits = {
-        documents: 200,
-        envelopes: 500,
-        aiRequests: 1000,
-      };
+      // Get user's actual subscription plan limits
+      const userPlan = await storage.getUserSubscriptionPlan(userId);
+      if (!userPlan) {
+        return res.status(404).json({ message: "No subscription plan found" });
+      }
 
       const usageWithLimits = {
-        documents: { current: usage.documents, limit: planLimits.documents, percentage: Math.round((usage.documents / planLimits.documents) * 100) },
-        envelopes: { current: usage.envelopes, limit: planLimits.envelopes, percentage: Math.round((usage.envelopes / planLimits.envelopes) * 100) },
-        aiRequests: { current: usage.aiRequests, limit: planLimits.aiRequests, percentage: Math.round((usage.aiRequests / planLimits.aiRequests) * 100) },
+        documents: { 
+          current: usage.documents, 
+          limit: userPlan.documentsLimit, 
+          percentage: Math.round((usage.documents / userPlan.documentsLimit) * 100) 
+        },
+        envelopes: { 
+          current: usage.envelopes, 
+          limit: userPlan.envelopesLimit, 
+          percentage: Math.round((usage.envelopes / userPlan.envelopesLimit) * 100) 
+        },
+        aiRequests: { 
+          current: usage.aiRequests, 
+          limit: userPlan.aiRequestsLimit, 
+          percentage: Math.round((usage.aiRequests / userPlan.aiRequestsLimit) * 100) 
+        },
+        planName: userPlan.name,
+        planPrice: userPlan.price
       };
 
       res.json(usageWithLimits);
