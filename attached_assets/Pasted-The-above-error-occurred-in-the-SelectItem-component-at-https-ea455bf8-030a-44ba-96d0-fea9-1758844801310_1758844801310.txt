@@ -1,0 +1,41 @@
+The above error occurred in the <SelectItem> component:
+
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js?v=1ce62764:858:7
+    at _c1 (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/select.tsx:208:12)
+    at div
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-BOL2CCOG.js?v=1ce62764:42:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:79:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:56:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-OXX3LNYC.js?v=1ce62764:39:15
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js?v=1ce62764:769:13
+    at div
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:79:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:56:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-OXX3LNYC.js?v=1ce62764:39:15
+    at Provider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:58:15)
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js?v=1ce62764:312:58
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:79:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-EVLBUYTV.js?v=1ce62764:56:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-BOL2CCOG.js?v=1ce62764:42:13
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:403:22
+    at SelectPortal
+    at _c7 (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/select.tsx:123:12)
+    at Provider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:58:15)
+    at Provider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:58:15)
+    at CollectionProvider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-OXX3LNYC.js?v=1ce62764:29:13)
+    at Provider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:58:15)
+    at Provider (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-XKNQWAH5.js?v=1ce62764:58:15)
+    at Popper (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-UII6PSRO.js?v=1ce62764:1953:11)
+    at Select (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-select.js?v=1ce62764:100:5)
+    at div
+    at https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/form.tsx:72:6
+    at Controller (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-4BFJKWC4.js?v=1ce62764:298:35)
+    at FormField (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/form.tsx:33:6)
+    at div
+    at div
+    at _c9 (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/card.tsx:114:12)
+    at div
+    at _c (https://ea455bf8-030a-44ba-96d0-fea959709037-00-26mspdliq302l.riker.replit.dev/src/components/ui/card.tsx:20:11)
+    at form
+    at…
+A  must have a value prop that is not an empty string. This is because the Select value can be set to an empty string to clear the selection and show the placeholder.

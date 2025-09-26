@@ -153,7 +153,7 @@ export default function Upload() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="">Auto-detect with AI</SelectItem>
+                              <SelectItem value="auto">Auto-detect with AI</SelectItem>
                               <SelectItem value="purchase_agreement">Purchase Agreement</SelectItem>
                               <SelectItem value="listing_agreement">Listing Agreement</SelectItem>
                               <SelectItem value="disclosure">Disclosure Statement</SelectItem>
