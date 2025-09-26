@@ -8,13 +8,40 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { parseRealEstateDocument } from "./openai";
 import { docusignService } from "./docusign";
-import { sendDocumentNotification, sendDocumentCompletedNotification, sendUsageAlertNotification } from "./sendgrid";
+import { sendDocumentNotification, sendDocumentCompletedNotification, sendUsageAlertNotification, sendDocumentFailedNotification, sendDocumentProcessingNotification, sendSigningReminderNotification } from "./sendgrid";
 import { insertRecipientSchema, insertDocumentSchema, insertDocumentRecipientSchema } from "@shared/schema";
 
 // Initialize Stripe
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2025-08-27.basil",
 }) : null;
+
+// Function to check and send usage alerts
+async function checkAndSendUsageAlerts(userId: string): Promise<void> {
+  try {
+    const alerts = await storage.getUsageThresholdAlerts(userId);
+    
+    if (alerts.length > 0) {
+      // Get user info for email
+      const user = await storage.getUser(userId);
+      if (!user || !user.email) return;
+      
+      // Send alerts for each threshold crossed
+      for (const alert of alerts) {
+        await sendUsageAlertNotification(
+          user.email,
+          user.firstName || 'User',
+          alert.recordType,
+          alert.current,
+          alert.limit,
+          alert.percentage
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error checking usage alerts:", error);
+  }
+}
 
 // Configure multer for file uploads
 const upload = multer({
@@ -231,6 +258,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: 1,
       });
 
+      // Check for usage threshold alerts after recording usage
+      await checkAndSendUsageAlerts(userId);
+
       // Save file to disk
       const { filePath, fileUrl } = await saveUploadedFile(file.buffer, file.originalname, userId);
 
@@ -249,6 +279,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const document = await storage.createDocument(documentData);
       console.log(`Document saved: ${document.id} at ${filePath}`);
+
+      // Send processing status notification to agent
+      if (req.user.claims?.email) {
+        try {
+          await sendDocumentProcessingNotification(
+            req.user.claims.email,
+            req.user.claims?.first_name || 'Agent',
+            document.name,
+            'processing'
+          );
+        } catch (emailError) {
+          console.error("Failed to send processing notification:", emailError);
+        }
+      }
 
       // Process document with AI in background
       try {
@@ -285,6 +329,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           count: 1,
         });
 
+        // Check for usage threshold alerts after recording AI usage
+        await checkAndSendUsageAlerts(userId);
+
         // Update document with AI parsing results
         await storage.updateDocument(document.id, {
           aiParsingData,
@@ -293,6 +340,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           propertyValue: aiParsingData.propertyValue ? String(aiParsingData.propertyValue) : null,
           status: 'pending',
         });
+
+        // Send pending status notification to agent
+        if (req.user.claims?.email) {
+          try {
+            await sendDocumentProcessingNotification(
+              req.user.claims.email,
+              req.user.claims?.first_name || 'Agent',
+              document.name,
+              'pending'
+            );
+          } catch (emailError) {
+            console.error("Failed to send pending notification:", emailError);
+          }
+        }
 
         // Parse recipients data if provided
         if (recipientsData) {
@@ -364,6 +425,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               count: 1,
             });
 
+            // Check for usage threshold alerts after recording envelope usage
+            await checkAndSendUsageAlerts(userId);
+
             // Update document with envelope ID
             await storage.updateDocument(document.id, {
               docusignEnvelopeId: envelope.envelopeId,
@@ -384,12 +448,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } catch (docusignError) {
             console.error("DocuSign error:", docusignError);
             await storage.updateDocument(document.id, { status: 'failed' });
+            
+            // Send failure notification to agent
+            if (req.user.claims?.email) {
+              try {
+                await sendDocumentFailedNotification(
+                  req.user.claims.email,
+                  req.user.claims?.first_name || 'Agent',
+                  document.name,
+                  'Envelope creation failed: ' + (docusignError as Error).message
+                );
+              } catch (emailError) {
+                console.error("Failed to send document failure notification:", emailError);
+              }
+            }
           }
         }
 
       } catch (aiError) {
         console.error("AI parsing error:", aiError);
         await storage.updateDocument(document.id, { status: 'failed' });
+        
+        // Send failure notification to agent
+        if (req.user.claims?.email) {
+          try {
+            await sendDocumentFailedNotification(
+              req.user.claims.email,
+              req.user.claims?.first_name || 'Agent',
+              document.name,
+              'AI processing failed: ' + (aiError as Error).message
+            );
+          } catch (emailError) {
+            console.error("Failed to send document failure notification:", emailError);
+          }
+        }
       }
 
       res.json({ documentId: document.id, message: "Document uploaded and processing started" });
@@ -577,6 +669,169 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch usage" });
     }
   });
+
+  // Reminder system endpoint
+  app.post('/api/reminders/send', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { daysThreshold = 3 } = req.body; // Default to 3 days
+      
+      // Get all pending documents for this user
+      const documents = await storage.getDocuments(userId);
+      const pendingDocuments = documents.filter(doc => doc.status === 'pending');
+      
+      let remindersSent = 0;
+      const currentDate = new Date();
+      
+      for (const document of pendingDocuments) {
+        // Get document recipients
+        const docRecipients = await storage.getDocumentRecipients(document.id);
+        const pendingRecipients = docRecipients.filter(dr => dr.status === 'pending');
+        
+        for (const docRecipient of pendingRecipients) {
+          // Check if enough days have passed since document creation
+          const daysWaiting = Math.floor((currentDate.getTime() - new Date(document.createdAt).getTime()) / (1000 * 3600 * 24));
+          
+          if (daysWaiting >= daysThreshold) {
+            // Check if we've already sent a reminder recently (within last 2 days)
+            const recentReminder = await db
+              .select()
+              .from(emailNotifications)
+              .where(
+                and(
+                  eq(emailNotifications.userId, userId),
+                  eq(emailNotifications.notificationType, 'signing_reminder'),
+                  eq(emailNotifications.recipientEmail, docRecipient.recipient.email),
+                  eq(emailNotifications.metadata, sql`${JSON.stringify({ documentId: document.id })}`)
+                )
+              )
+              .orderBy(desc(emailNotifications.sentAt))
+              .limit(1);
+            
+            const shouldSendReminder = recentReminder.length === 0 || 
+              (recentReminder[0].sentAt && (currentDate.getTime() - new Date(recentReminder[0].sentAt).getTime()) > (2 * 24 * 60 * 60 * 1000));
+            
+            if (shouldSendReminder) {
+              // Send reminder
+              const success = await sendSigningReminderNotification(
+                docRecipient.recipient.email,
+                docRecipient.recipient.name,
+                document.name,
+                req.user.claims?.first_name || 'Agent',
+                daysWaiting
+              );
+              
+              if (success) {
+                // Record the reminder
+                await storage.createEmailNotification({
+                  userId,
+                  notificationType: 'signing_reminder',
+                  recipientEmail: docRecipient.recipient.email,
+                  subject: `Reminder: Please sign ${document.name}`,
+                  status: 'sent',
+                  metadata: { documentId: document.id, daysWaiting },
+                  sentAt: new Date(),
+                });
+                remindersSent++;
+              }
+            }
+          }
+        }
+      }
+      
+      res.json({ 
+        message: `Sent ${remindersSent} signing reminders`,
+        remindersSent,
+        documentsChecked: pendingDocuments.length
+      });
+    } catch (error) {
+      console.error("Error sending reminders:", error);
+      res.status(500).json({ message: "Failed to send reminders" });
+    }
+  });
+
+  // Auto-schedule reminder checks (every 6 hours)
+  setInterval(async () => {
+    try {
+      console.log("Running scheduled reminder check...");
+      
+      // Get all users with pending documents
+      const pendingDocs = await db
+        .select({ userId: documents.userId })
+        .from(documents)
+        .where(eq(documents.status, 'pending'))
+        .groupBy(documents.userId);
+      
+      for (const doc of pendingDocs) {
+        // Simulate reminder check for each user
+        const documents = await storage.getDocuments(doc.userId);
+        const pendingDocuments = documents.filter(d => d.status === 'pending');
+        
+        let remindersSent = 0;
+        const currentDate = new Date();
+        
+        for (const document of pendingDocuments) {
+          const docRecipients = await storage.getDocumentRecipients(document.id);
+          const pendingRecipients = docRecipients.filter(dr => dr.status === 'pending');
+          
+          for (const docRecipient of pendingRecipients) {
+            const daysWaiting = Math.floor((currentDate.getTime() - new Date(document.createdAt).getTime()) / (1000 * 3600 * 24));
+            
+            if (daysWaiting >= 3) {
+              // Check for recent reminders
+              const recentReminder = await db
+                .select()
+                .from(emailNotifications)
+                .where(
+                  and(
+                    eq(emailNotifications.userId, doc.userId),
+                    eq(emailNotifications.emailType, 'signing_reminder'),
+                    eq(emailNotifications.recipientEmail, docRecipient.recipient.email)
+                  )
+                )
+                .orderBy(desc(emailNotifications.sentAt))
+                .limit(1);
+              
+              const shouldSendReminder = recentReminder.length === 0 || 
+                (recentReminder[0].sentAt && (currentDate.getTime() - new Date(recentReminder[0].sentAt).getTime()) > (2 * 24 * 60 * 60 * 1000));
+              
+              if (shouldSendReminder) {
+                const user = await storage.getUser(doc.userId);
+                if (user) {
+                  const success = await sendSigningReminderNotification(
+                    docRecipient.recipient.email,
+                    docRecipient.recipient.name,
+                    document.name,
+                    user.firstName || 'Agent',
+                    daysWaiting
+                  );
+                  
+                  if (success) {
+                    await storage.createEmailNotification({
+                      userId: doc.userId,
+                      recipientEmail: docRecipient.recipient.email,
+                      emailType: 'signing_reminder',
+                      subject: `Reminder: Please sign ${document.name}`,
+                      status: 'sent',
+                      documentId: document.id,
+                      sentAt: new Date(),
+                    });
+                    remindersSent++;
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        if (remindersSent > 0) {
+          console.log(`Sent ${remindersSent} automatic reminders for user ${doc.userId}`);
+        }
+      }
+    } catch (error) {
+      console.error("Error in scheduled reminder check:", error);
+    }
+  }, 6 * 60 * 60 * 1000); // Every 6 hours
 
   const httpServer = createServer(app);
   return httpServer;

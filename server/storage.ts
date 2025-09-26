@@ -57,6 +57,12 @@ export interface IStorage {
   // Subscription plans
   getSubscriptionPlans(): Promise<SubscriptionPlan[]>;
   getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined>;
+  getUserSubscriptionPlan(userId: string): Promise<SubscriptionPlan | null>;
+
+  // Usage enforcement
+  checkUsageLimits(userId: string, recordType: 'document' | 'envelope' | 'ai_request'): Promise<{ allowed: boolean; current: number; limit: number; message?: string }>;
+  canPerformAction(userId: string, actionType: 'upload_document' | 'create_envelope' | 'ai_request'): Promise<{ allowed: boolean; message?: string }>;
+  getUsageThresholdAlerts(userId: string): Promise<{ recordType: string; percentage: number; current: number; limit: number }[]>;
 
   // Billing operations
   createBillingRecord(billing: InsertBillingRecord): Promise<BillingRecord>;
@@ -296,6 +302,79 @@ export class DatabaseStorage implements IStorage {
 
     const result = await this.checkUsageLimits(userId, recordType);
     return { allowed: result.allowed, message: result.message };
+  }
+
+  async getUsageThresholdAlerts(userId: string): Promise<{ recordType: string; percentage: number; current: number; limit: number }[]> {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const usage = await this.getUsageForMonth(userId, currentMonth);
+    const plan = await this.getUserSubscriptionPlan(userId);
+    
+    if (!plan) return [];
+
+    const alerts: { recordType: string; percentage: number; current: number; limit: number }[] = [];
+    const thresholds = [80, 90, 100]; // Alert at 80%, 90%, and 100%
+
+    const usageData = [
+      { type: 'documents', current: usage.documents, limit: plan.documentsLimit },
+      { type: 'envelopes', current: usage.envelopes, limit: plan.envelopesLimit },
+      { type: 'ai_requests', current: usage.aiRequests, limit: plan.aiRequestsLimit }
+    ];
+
+    for (const data of usageData) {
+      if (data.limit > 0) {
+        const percentage = Math.round((data.current / data.limit) * 100);
+        
+        // Check if we've crossed a threshold
+        for (const threshold of thresholds) {
+          if (percentage >= threshold) {
+            // Check if we haven't already alerted for this threshold this month
+            const hasBeenAlerted = await this.hasBeenAlertedForThreshold(userId, data.type, threshold, currentMonth);
+            
+            if (!hasBeenAlerted) {
+              alerts.push({
+                recordType: data.type,
+                percentage: threshold, // Use threshold instead of calculated percentage for consistency
+                current: data.current,
+                limit: data.limit
+              });
+              
+              // Record that we've alerted for this threshold
+              await this.recordThresholdAlert(userId, data.type, threshold, currentMonth);
+            }
+            break; // Only alert for the highest threshold crossed
+          }
+        }
+      }
+    }
+
+    return alerts;
+  }
+
+  private async hasBeenAlertedForThreshold(userId: string, recordType: string, threshold: number, month: string): Promise<boolean> {
+    const notifications = await db
+      .select()
+      .from(emailNotifications)
+      .where(
+        and(
+          eq(emailNotifications.userId, userId),
+          eq(emailNotifications.emailType, `usage_alert_${recordType}_${threshold}`),
+          eq(emailNotifications.subject, `Usage Alert: ${threshold}% of ${recordType} limit reached`)
+        )
+      )
+      .limit(1);
+    
+    return notifications.length > 0;
+  }
+
+  private async recordThresholdAlert(userId: string, recordType: string, threshold: number, month: string): Promise<void> {
+    await this.createEmailNotification({
+      userId,
+      recipientEmail: '', // Will be filled when sending
+      emailType: `usage_alert_${recordType}_${threshold}`,
+      subject: `Usage Alert: ${threshold}% of ${recordType} limit reached`,
+      status: 'sent',
+      sentAt: new Date(),
+    });
   }
 
   async getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined> {

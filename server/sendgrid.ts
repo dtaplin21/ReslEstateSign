@@ -135,3 +135,108 @@ export async function sendUsageAlertNotification(
     html,
   });
 }
+
+export async function sendDocumentFailedNotification(
+  agentEmail: string,
+  agentName: string,
+  documentName: string,
+  errorReason: string
+): Promise<boolean> {
+  const subject = `Document Processing Failed: ${documentName}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #dc3545;">Document Processing Failed</h2>
+      <p>Hello ${agentName},</p>
+      <p>Unfortunately, there was an issue processing your document:</p>
+      <div style="background-color: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #dc3545;">
+        <strong>${documentName}</strong><br>
+        <span style="color: #721c24;"><strong>Error:</strong> ${errorReason}</span>
+      </div>
+      <p>Please try uploading the document again, or contact support if the issue persists.</p>
+      <p>Best regards,<br>DocuSign Pro Team</p>
+    </div>
+  `;
+
+  return await sendEmail({
+    to: agentEmail,
+    from: process.env.FROM_EMAIL || 'noreply@docusignpro.com',
+    subject,
+    html,
+  });
+}
+
+export async function sendDocumentProcessingNotification(
+  agentEmail: string,
+  agentName: string,
+  documentName: string,
+  status: string
+): Promise<boolean> {
+  const subject = `Document Update: ${documentName}`;
+  const statusColors: Record<string, string> = {
+    processing: '#6c757d',
+    pending: '#17a2b8',
+    completed: '#28a745',
+    failed: '#dc3545'
+  };
+  
+  const statusMessages: Record<string, string> = {
+    processing: 'Your document is being processed with AI analysis.',
+    pending: 'Your document is ready and has been sent to recipients for signing.',
+    completed: 'All parties have signed the document successfully.',
+    failed: 'There was an issue processing your document.'
+  };
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: ${statusColors[status] || '#6c757d'};">Document Status Update</h2>
+      <p>Hello ${agentName},</p>
+      <p>Your document status has been updated:</p>
+      <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid ${statusColors[status] || '#6c757d'};">
+        <strong>${documentName}</strong><br>
+        <span style="color: ${statusColors[status] || '#6c757d'}; text-transform: uppercase; font-weight: bold;">Status: ${status}</span><br>
+        <span style="color: #666;">${statusMessages[status] || 'Status updated.'}</span>
+      </div>
+      <p>You can check your dashboard for more details and track the signing progress.</p>
+      <p>Best regards,<br>DocuSign Pro Team</p>
+    </div>
+  `;
+
+  return await sendEmail({
+    to: agentEmail,
+    from: process.env.FROM_EMAIL || 'noreply@docusignpro.com',
+    subject,
+    html,
+  });
+}
+
+export async function sendSigningReminderNotification(
+  recipientEmail: string,
+  recipientName: string,
+  documentName: string,
+  senderName: string,
+  daysWaiting: number
+): Promise<boolean> {
+  const subject = `Reminder: Please sign ${documentName}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #ffc107;">Signature Reminder</h2>
+      <p>Hello ${recipientName},</p>
+      <p>This is a friendly reminder that you have a document waiting for your signature:</p>
+      <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+        <strong>${documentName}</strong><br>
+        <span style="color: #856404;">From: ${senderName}</span><br>
+        <span style="color: #856404;">Waiting: ${daysWaiting} day${daysWaiting > 1 ? 's' : ''}</span>
+      </div>
+      <p>Please review and sign the document at your earliest convenience to keep the transaction moving forward.</p>
+      <p>Thank you for your attention to this matter.</p>
+      <p>Best regards,<br>DocuSign Pro Team</p>
+    </div>
+  `;
+
+  return await sendEmail({
+    to: recipientEmail,
+    from: process.env.FROM_EMAIL || 'noreply@docusignpro.com',
+    subject,
+    html,
+  });
+}
