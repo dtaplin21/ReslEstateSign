@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useStripe, Elements, PaymentElement, useElements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,32 +66,46 @@ const SubscribeForm = () => {
   );
 };
 
+interface SubscriptionPlan {
+  id: string;
+  name: string;
+  price: string;
+  documentsLimit: number;
+  envelopesLimit: number;
+  aiRequestsLimit: number;
+  storageLimit: number;
+  features: string[];
+}
+
 export default function Subscribe() {
   const [clientSecret, setClientSecret] = useState("");
+  const [selectedPlan, setSelectedPlan] = useState("professional");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   // Fetch subscription plans from API
-  const { data: pricingPlans = [], isLoading: plansLoading } = useQuery({
+  const { data: pricingPlans = [], isLoading: plansLoading } = useQuery<SubscriptionPlan[]>({
     queryKey: ["/api/subscription-plans"],
   });
 
   useEffect(() => {
-    // Create subscription as soon as the page loads
-    apiRequest("POST", "/api/get-or-create-subscription", {})
-      .then((res) => res.json())
-      .then((data) => {
-        setClientSecret(data.clientSecret);
-      })
-      .catch((error) => {
-        toast({
-          title: "Error",
-          description: "Failed to initialize subscription. Please try again.",
-          variant: "destructive",
+    // Only create subscription once a plan is selected
+    if (selectedPlan) {
+      apiRequest("POST", "/api/get-or-create-subscription", { planId: selectedPlan })
+        .then((res) => res.json())
+        .then((data) => {
+          setClientSecret(data.clientSecret);
+        })
+        .catch((error) => {
+          toast({
+            title: "Error",
+            description: "Failed to initialize subscription. Please try again.",
+            variant: "destructive",
+          });
+          console.error("Subscription error:", error);
         });
-        console.error("Subscription error:", error);
-      });
-  }, [toast]);
+    }
+  }, [selectedPlan, toast]);
 
   if (!clientSecret) {
     return (
@@ -101,6 +116,30 @@ export default function Subscribe() {
             <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" aria-label="Loading"/>
             <p className="text-muted-foreground">Initializing subscription...</p>
           </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Handle missing Stripe configuration
+  if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
+    return (
+      <div className="min-h-screen flex">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Card className="max-w-md mx-auto">
+            <CardHeader>
+              <CardTitle className="text-center text-destructive">Stripe Not Configured</CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <p className="text-muted-foreground">
+                Payment processing is not available. Please contact support to set up your subscription.
+              </p>
+              <Button variant="outline" onClick={() => setLocation('/billing')}>
+                Back to Billing
+              </Button>
+            </CardContent>
+          </Card>
         </main>
       </div>
     );
@@ -139,16 +178,20 @@ export default function Subscribe() {
         <div className="p-6 space-y-8">
           {/* Pricing Plans */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            {pricingPlans.map((plan: any, index: number) => (
+            {pricingPlans.map((plan, index) => (
               <Card 
                 key={plan.id} 
-                className={`relative ${index === 1 ? 'border-primary border-2' : ''}`}
+                className={`relative cursor-pointer transition-all hover:shadow-lg ${
+                  selectedPlan === plan.id ? 'border-primary border-2 shadow-lg' : 
+                  index === 1 ? 'border-primary border-2' : ''
+                }`}
+                onClick={() => setSelectedPlan(plan.id)}
                 data-testid={`card-plan-${plan.id}`}
               >
-                {index === 1 && (
+                {(index === 1 || selectedPlan === plan.id) && (
                   <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
                     <Badge className="bg-primary text-primary-foreground">
-                      Most Popular
+                      {selectedPlan === plan.id ? 'Selected' : 'Most Popular'}
                     </Badge>
                   </div>
                 )}
@@ -177,33 +220,78 @@ export default function Subscribe() {
                       <i className="fas fa-check text-green-600"></i>
                       <span>{plan.storageLimit} GB storage</span>
                     </li>
-                    {(plan.features || []).map((feature: string, index: number) => (
-                      <li key={index} className="flex items-center space-x-2">
+                    {(plan.features || []).map((feature: string, featureIndex: number) => (
+                      <li key={featureIndex} className="flex items-center space-x-2">
                         <i className="fas fa-check text-green-600"></i>
                         <span>{feature}</span>
                       </li>
                     ))}
                   </ul>
+                  <Button 
+                    className={`w-full ${selectedPlan === plan.id ? 'bg-primary text-primary-foreground' : ''}`}
+                    variant={selectedPlan === plan.id ? 'default' : 'outline'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedPlan(plan.id);
+                    }}
+                    data-testid={`button-select-plan-${plan.id}`}
+                  >
+                    {selectedPlan === plan.id ? 'Selected' : 'Select Plan'}
+                  </Button>
                 </CardContent>
               </Card>
             ))}
           </div>
 
           {/* Payment Form */}
-          <Card className="max-w-2xl mx-auto">
-            <CardHeader>
-              <CardTitle>Complete Your Subscription</CardTitle>
-              <p className="text-muted-foreground">
-                Enter your payment information to activate your Professional plan
-              </p>
-            </CardHeader>
-            <CardContent>
-              {/* Make SURE to wrap the form in <Elements> which provides the stripe context. */}
-              <Elements stripe={stripePromise} options={{ clientSecret }}>
-                <SubscribeForm />
-              </Elements>
-            </CardContent>
-          </Card>
+          {clientSecret && selectedPlan && (
+            <Card className="max-w-2xl mx-auto">
+              <CardHeader>
+                <CardTitle>Complete Your Subscription</CardTitle>
+                <p className="text-muted-foreground">
+                  Enter your payment information to activate your {pricingPlans.find(p => p.id === selectedPlan)?.name} plan
+                </p>
+              </CardHeader>
+              <CardContent>
+                {/* Selected Plan Summary */}
+                {(() => {
+                  const plan = pricingPlans.find(p => p.id === selectedPlan);
+                  return plan ? (
+                    <div className="bg-muted p-4 rounded-lg mb-6">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="font-medium">{plan.name} Plan</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {plan.documentsLimit} documents, {plan.envelopesLimit} envelopes, {plan.aiRequestsLimit} AI requests/month
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold">${plan.price}</div>
+                          <div className="text-sm text-muted-foreground">per month</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
+                
+                {/* Make SURE to wrap the form in <Elements> which provides the stripe context. */}
+                <Elements stripe={stripePromise} options={{ clientSecret }}>
+                  <SubscribeForm />
+                </Elements>
+              </CardContent>
+            </Card>
+          )}
+
+          {!clientSecret && selectedPlan && (
+            <Card className="max-w-2xl mx-auto">
+              <CardContent className="flex items-center justify-center py-8">
+                <div className="text-center">
+                  <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+                  <p className="text-muted-foreground">Preparing your subscription...</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Features Summary */}
           <Card className="max-w-4xl mx-auto">
