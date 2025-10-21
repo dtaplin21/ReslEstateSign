@@ -412,4 +412,226 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+// Mock storage for development when DATABASE_URL is not properly configured
+class MockStorage implements IStorage {
+  private users: Map<string, User> = new Map();
+  private recipients: Map<string, Recipient> = new Map();
+  private documents: Map<string, Document> = new Map();
+  private documentRecipients: Map<string, DocumentRecipient> = new Map();
+  private usageRecords: Map<string, UsageRecord> = new Map();
+  private subscriptionPlans: Map<string, SubscriptionPlan> = new Map();
+  private billingRecords: Map<string, BillingRecord> = new Map();
+  private emailNotifications: Map<string, EmailNotification> = new Map();
+
+  async getUser(id: string): Promise<User | undefined> {
+    return this.users.get(id);
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    if (!userData.id) {
+      throw new Error('User ID is required');
+    }
+    const user = { ...userData, createdAt: new Date(), updatedAt: new Date() } as User;
+    this.users.set(userData.id, user);
+    return user;
+  }
+
+  async updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('User not found');
+    const updatedUser = { ...user, stripeCustomerId, stripeSubscriptionId, updatedAt: new Date() };
+    this.users.set(userId, updatedUser);
+    return updatedUser;
+  }
+
+  async getRecipients(userId: string): Promise<Recipient[]> {
+    return Array.from(this.recipients.values()).filter(r => r.userId === userId);
+  }
+
+  async createRecipient(recipient: InsertRecipient): Promise<Recipient> {
+    const newRecipient = { ...recipient, id: `recipient_${Date.now()}`, createdAt: new Date(), updatedAt: new Date() } as Recipient;
+    this.recipients.set(newRecipient.id, newRecipient);
+    return newRecipient;
+  }
+
+  async updateRecipient(id: string, recipient: Partial<Recipient>): Promise<Recipient> {
+    const existing = this.recipients.get(id);
+    if (!existing) throw new Error('Recipient not found');
+    const updated = { ...existing, ...recipient, updatedAt: new Date() };
+    this.recipients.set(id, updated);
+    return updated;
+  }
+
+  async deleteRecipient(id: string): Promise<void> {
+    this.recipients.delete(id);
+  }
+
+  async getDocuments(userId: string): Promise<Document[]> {
+    return Array.from(this.documents.values()).filter(d => d.userId === userId);
+  }
+
+  async getDocument(id: string): Promise<Document | undefined> {
+    return this.documents.get(id);
+  }
+
+  async createDocument(document: InsertDocument): Promise<Document> {
+    const newDocument = { ...document, id: `doc_${Date.now()}`, createdAt: new Date(), updatedAt: new Date() } as Document;
+    this.documents.set(newDocument.id, newDocument);
+    return newDocument;
+  }
+
+  async updateDocument(id: string, document: Partial<Document>): Promise<Document> {
+    const existing = this.documents.get(id);
+    if (!existing) throw new Error('Document not found');
+    const updated = { ...existing, ...document, updatedAt: new Date() };
+    this.documents.set(id, updated);
+    return updated;
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    this.documents.delete(id);
+  }
+
+  async getDocumentRecipients(documentId: string): Promise<(DocumentRecipient & { recipient: Recipient })[]> {
+    const docRecipients = Array.from(this.documentRecipients.values()).filter(dr => dr.documentId === documentId);
+    return docRecipients.map(dr => ({
+      ...dr,
+      recipient: this.recipients.get(dr.recipientId)!
+    }));
+  }
+
+  async addDocumentRecipient(documentRecipient: InsertDocumentRecipient): Promise<DocumentRecipient> {
+    const newDocRecipient = { ...documentRecipient, id: `doc_recipient_${Date.now()}`, createdAt: new Date(), updatedAt: new Date() } as DocumentRecipient;
+    this.documentRecipients.set(newDocRecipient.id, newDocRecipient);
+    return newDocRecipient;
+  }
+
+  async updateDocumentRecipientStatus(id: string, status: string): Promise<DocumentRecipient> {
+    const existing = this.documentRecipients.get(id);
+    if (!existing) throw new Error('Document recipient not found');
+    const updated = { ...existing, status, updatedAt: new Date() };
+    this.documentRecipients.set(id, updated);
+    return updated;
+  }
+
+  async getUsageForMonth(userId: string, month: string): Promise<{ documents: number; envelopes: number; aiRequests: number }> {
+    const records = Array.from(this.usageRecords.values()).filter(r => r.userId === userId && r.recordMonth === month);
+    return {
+      documents: records.filter(r => r.recordType === 'document').reduce((sum, r) => sum + (r.count || 0), 0),
+      envelopes: records.filter(r => r.recordType === 'envelope').reduce((sum, r) => sum + (r.count || 0), 0),
+      aiRequests: records.filter(r => r.recordType === 'ai_request').reduce((sum, r) => sum + (r.count || 0), 0),
+    };
+  }
+
+  async recordUsage(usage: InsertUsageRecord): Promise<UsageRecord> {
+    const newUsage = { ...usage, id: `usage_${Date.now()}`, createdAt: new Date() } as UsageRecord;
+    this.usageRecords.set(newUsage.id, newUsage);
+    return newUsage;
+  }
+
+  async canPerformAction(userId: string, action: string): Promise<{ allowed: boolean; message?: string }> {
+    // Mock implementation - always allow for development
+    return { allowed: true };
+  }
+
+  async getUsageThresholdAlerts(userId: string): Promise<any[]> {
+    return [];
+  }
+
+  async getUserSubscriptionPlan(userId: string): Promise<SubscriptionPlan | null> {
+    // Mock subscription plan
+    return {
+      id: 'plan_starter',
+      name: 'Starter',
+      price: '29',
+      documentsLimit: 50,
+      envelopesLimit: 50,
+      aiRequestsLimit: 100,
+      storageLimit: 1000,
+      features: ['basic_support'],
+      createdAt: new Date()
+    };
+  }
+
+  async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+    return [
+      {
+        id: 'plan_starter',
+        name: 'Starter',
+        price: '29',
+        documentsLimit: 50,
+        envelopesLimit: 50,
+        aiRequestsLimit: 100,
+        storageLimit: 1000,
+        features: ['basic_support'],
+        createdAt: new Date()
+      }
+    ];
+  }
+
+  async getBillingHistory(userId: string): Promise<BillingRecord[]> {
+    return [];
+  }
+
+  async createEmailNotification(notification: InsertEmailNotification): Promise<EmailNotification> {
+    const newNotification = { ...notification, id: `email_${Date.now()}`, createdAt: new Date() } as EmailNotification;
+    this.emailNotifications.set(newNotification.id, newNotification);
+    return newNotification;
+  }
+
+  async updateEmailNotificationStatus(id: string, status: string, sentAt?: Date): Promise<EmailNotification> {
+    const existing = this.emailNotifications.get(id);
+    if (!existing) throw new Error('Email notification not found');
+    const updated = { ...existing, status, sentAt: sentAt || null, updatedAt: new Date() };
+    this.emailNotifications.set(id, updated);
+    return updated;
+  }
+
+  async getSubscriptionPlan(id: string): Promise<SubscriptionPlan | undefined> {
+    return this.subscriptionPlans.get(id);
+  }
+
+  async checkUsageLimits(userId: string, recordType: 'document' | 'envelope' | 'ai_request'): Promise<{ allowed: boolean; current: number; limit: number; message?: string }> {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const usage = await this.getUsageForMonth(userId, currentMonth);
+    const plan = await this.getUserSubscriptionPlan(userId);
+    
+    if (!plan) {
+      return { allowed: false, current: 0, limit: 0, message: "No subscription plan found" };
+    }
+
+    let current: number, limit: number;
+    switch (recordType) {
+      case 'document':
+        current = usage.documents;
+        limit = plan.documentsLimit;
+        break;
+      case 'envelope':
+        current = usage.envelopes;
+        limit = plan.envelopesLimit;
+        break;
+      case 'ai_request':
+        current = usage.aiRequests;
+        limit = plan.aiRequestsLimit;
+        break;
+    }
+
+    const allowed = current < limit;
+    const message = allowed ? undefined : `You have reached your ${recordType} limit of ${limit} for this month. Upgrade your plan to continue.`;
+    
+    return { allowed, current, limit, message };
+  }
+
+  async createBillingRecord(billing: InsertBillingRecord): Promise<BillingRecord> {
+    const newBilling = { ...billing, id: `billing_${Date.now()}`, createdAt: new Date() } as BillingRecord;
+    this.billingRecords.set(newBilling.id, newBilling);
+    return newBilling;
+  }
+}
+
+// Use mock storage if DATABASE_URL is not properly configured
+const isDatabaseConfigured = process.env.DATABASE_URL && 
+  !process.env.DATABASE_URL.includes('username:password') && 
+  !process.env.DATABASE_URL.includes('localhost:5432');
+
+export const storage = isDatabaseConfigured ? new DatabaseStorage() : new MockStorage();
