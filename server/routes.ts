@@ -9,11 +9,13 @@ import { setupAuth, isAuthenticated } from "./auth";
 import { parseRealEstateDocument } from "./openai";
 import { docusignService } from "./docusign";
 import { sendDocumentNotification, sendDocumentCompletedNotification, sendUsageAlertNotification, sendDocumentFailedNotification, sendDocumentProcessingNotification, sendSigningReminderNotification } from "./sendgrid";
-import { insertRecipientSchema, insertDocumentSchema, insertDocumentRecipientSchema } from "@shared/schema";
+import { insertRecipientSchema, insertDocumentSchema, insertDocumentRecipientSchema, emailNotifications, documents } from "@shared/schema";
+import { db } from "./db";
+import { and, eq, desc, sql } from "drizzle-orm";
 
 // Initialize Stripe
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2024-06-20",
+  apiVersion: "2025-08-27.basil",
 }) : null;
 
 // Function to check and send usage alerts
@@ -690,6 +692,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         for (const docRecipient of pendingRecipients) {
           // Check if enough days have passed since document creation
+          if (!document.createdAt) continue;
           const daysWaiting = Math.floor((currentDate.getTime() - new Date(document.createdAt).getTime()) / (1000 * 3600 * 24));
           
           if (daysWaiting >= daysThreshold) {
@@ -700,9 +703,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .where(
                 and(
                   eq(emailNotifications.userId, userId),
-                  eq(emailNotifications.notificationType, 'signing_reminder'),
+                  eq(emailNotifications.emailType, 'signing_reminder'),
                   eq(emailNotifications.recipientEmail, docRecipient.recipient.email),
-                  eq(emailNotifications.metadata, sql`${JSON.stringify({ documentId: document.id })}`)
+                  eq(emailNotifications.documentId, document.id)
                 )
               )
               .orderBy(desc(emailNotifications.sentAt))
@@ -775,6 +778,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const pendingRecipients = docRecipients.filter(dr => dr.status === 'pending');
           
           for (const docRecipient of pendingRecipients) {
+            if (!document.createdAt) continue;
             const daysWaiting = Math.floor((currentDate.getTime() - new Date(document.createdAt).getTime()) / (1000 * 3600 * 24));
             
             if (daysWaiting >= 3) {
