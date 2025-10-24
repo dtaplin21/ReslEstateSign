@@ -76,6 +76,9 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   // User operations (required for Replit Auth)
   async getUser(id: string): Promise<User | undefined> {
+    if (!db) {
+      throw new Error("Database not available");
+    }
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
   }
@@ -204,7 +207,7 @@ export class DatabaseStorage implements IStorage {
       .groupBy(usageRecords.recordType);
 
     const result = { documents: 0, envelopes: 0, aiRequests: 0 };
-    usage.forEach((record) => {
+    usage.forEach((record: { recordType: string; totalCount: number }) => {
       if (record.recordType === "document") result.documents = Number(record.totalCount);
       if (record.recordType === "envelope") result.envelopes = Number(record.totalCount);
       if (record.recordType === "ai_request") result.aiRequests = Number(record.totalCount);
@@ -629,9 +632,8 @@ class MockStorage implements IStorage {
   }
 }
 
-// Use mock storage if DATABASE_URL is not properly configured
-const isDatabaseConfigured = process.env.DATABASE_URL && 
-  !process.env.DATABASE_URL.includes('username:password') && 
-  !process.env.DATABASE_URL.includes('localhost:5432');
+// Force mock storage for development - no database credentials needed
+export const storage = new MockStorage();
 
-export const storage = isDatabaseConfigured ? new DatabaseStorage() : new MockStorage();
+// Log which storage is being used
+console.log("📊 Using mock storage (development mode)");

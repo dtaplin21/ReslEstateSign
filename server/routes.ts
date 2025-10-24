@@ -14,9 +14,11 @@ import { db } from "./db";
 import { and, eq, desc, sql } from "drizzle-orm";
 
 // Initialize Stripe
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-08-27.basil",
-}) : null;
+const stripe = process.env.STRIPE_SECRET_KEY && 
+  !process.env.STRIPE_SECRET_KEY.includes('your-stripe-secret-key') ? 
+  new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: "2025-08-27.basil",
+  }) : null;
 
 // Function to check and send usage alerts
 async function checkAndSendUsageAlerts(userId: string): Promise<void> {

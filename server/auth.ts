@@ -49,6 +49,8 @@ export async function setupAuth(app: Express): Promise<void> {
     passwordField: 'password'
   }, async (email: string, password: string, done) => {
     try {
+      console.log(`🔐 Attempting login for email: ${email}`);
+      
       // Mock authentication - in production, verify credentials properly
       // For demo purposes, create/get user based on email
       const userId = `demo_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
@@ -58,11 +60,22 @@ export async function setupAuth(app: Express): Promise<void> {
         firstName: 'Demo',
         lastName: 'User',
       };
+      
+      console.log(`👤 Creating/updating user: ${userId}`);
       await storage.upsertUser(newUser);
+      
+      console.log(`🔍 Fetching user: ${userId}`);
       const user = await storage.getUser(userId);
       
+      if (!user) {
+        console.error(`❌ User not found after creation: ${userId}`);
+        return done(new Error('User creation failed'));
+      }
+      
+      console.log(`✅ Login successful for user: ${user.email}`);
       return done(null, user);
     } catch (error) {
+      console.error('❌ Login error:', error);
       return done(error);
     }
   }));
